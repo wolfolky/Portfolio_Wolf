@@ -42,34 +42,100 @@ const HOLDINGS = [
 
 const CASH = 38971;
 
-let priceCache = { stocks: {}, crypto: {}, news: [], updatedAt: null };
+let priceCache = { stocks: {}, news: [], updatedAt: null };
 
+// Fetch prices using Yahoo Finance v8 with rotating user agents
 async function fetchStockPrices() {
-  const tickers = HOLDINGS.map(h => h.ticker).join(',');
-  try {
-    const url = 'https://query1.finance.yahoo.com/v7/finance/quote?symbols=' + tickers + '&fields=regularMarketPrice,regularMarketChangePercent,regularMarketChange,regularMarketPreviousClose,fiftyTwoWeekHigh,fiftyTwoWeekLow';
-    const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' } });
-    const data = await res.json();
-    const quotes = (data && data.quoteResponse && data.quoteResponse.result) || [];
-    quotes.forEach(function(q) {
-      priceCache.stocks[q.symbol] = {
-        price: q.regularMarketPrice,
-        change: q.regularMarketChange,
-        changePct: q.regularMarketChangePercent,
-        prevClose: q.regularMarketPreviousClose,
-        high52: q.fiftyTwoWeekHigh,
-        low52: q.fiftyTwoWeekLow,
-      };
-    });
-  } catch (e) {
-    console.error('Stock price fetch error:', e.message);
+  const agents = [
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36',
+  ];
+  const agent = agents[Math.floor(Math.random() * agents.length)];
+
+  // Fetch in batches of 10 to avoid URL length limits
+  const batches = [];
+  for (let i = 0; i < HOLDINGS.length; i += 10) {
+    batches.push(HOLDINGS.slice(i, i + 10));
+  }
+
+  for (const batch of batches) {
+    const symbols = batch.map(function(h) { return h.ticker; }).join('%2C');
+    const url = 'https://query2.finance.yahoo.com/v8/finance/spark?symbols=' + symbols + '&range=1d&interval=5m';
+    try {
+      const res = await fetch(url, {
+        headers: {
+          'User-Agent': agent,
+          'Accept': '*/*',
+          'Accept-Language': 'en-US,en;q=0.9',
+          'Referer': 'https://finance.yahoo.com',
+          'Origin': 'https://finance.yahoo.com',
+        }
+      });
+      const data = await res.json();
+      const spark = (data && data.spark && data.spark.result) || [];
+      spark.forEach(function(item) {
+        if (!item || !item.symbol) return;
+        const resp = item.response && item.response[0];
+        if (!resp) return;
+        const meta = resp.meta || {};
+        const closes = (resp.indicators && resp.indicators.quote && resp.indicators.quote[0] && resp.indicators.quote[0].close) || [];
+        const validCloses = closes.filter(function(c) { return c !== null && c !== undefined; });
+        const currentPrice = meta.regularMarketPrice || validCloses[validCloses.length - 1];
+        const prevClose = meta.chartPreviousClose || validCloses[0];
+        const change = currentPrice && prevClose ? currentPrice - prevClose : 0;
+        const changePct = prevClose && prevClose !== 0 ? (change / prevClose) * 100 : 0;
+        if (currentPrice) {
+          priceCache.stocks[item.symbol] = {
+            price: currentPrice,
+            change: change,
+            changePct: changePct,
+            prevClose: prevClose,
+            sparkline: validCloses.slice(-20),
+          };
+        }
+      });
+    } catch (e) {
+      console.error('Batch fetch error:', e.message);
+    }
+  }
+
+  // Fallback: try v7 quote endpoint for any missing tickers
+  const missing = HOLDINGS.filter(function(h) { return !priceCache.stocks[h.ticker]; });
+  if (missing.length > 0) {
+    try {
+      const symbols = missing.map(function(h) { return h.ticker; }).join(',');
+      const url = 'https://query1.finance.yahoo.com/v7/finance/quote?symbols=' + symbols;
+      const res = await fetch(url, {
+        headers: { 'User-Agent': agent, 'Referer': 'https://finance.yahoo.com' }
+      });
+      const data = await res.json();
+      const quotes = (data && data.quoteResponse && data.quoteResponse.result) || [];
+      quotes.forEach(function(q) {
+        if (q.regularMarketPrice) {
+          priceCache.stocks[q.symbol] = {
+            price: q.regularMarketPrice,
+            change: q.regularMarketChange || 0,
+            changePct: q.regularMarketChangePercent || 0,
+            prevClose: q.regularMarketPreviousClose || q.regularMarketPrice,
+            sparkline: [],
+          };
+        }
+      });
+    } catch (e) {
+      console.error('Fallback fetch error:', e.message);
+    }
   }
 }
 
 async function fetchNews() {
+  const topics = ['NVDA', 'TSLA', 'AMD', 'stock+market'];
+  const topic = topics[Math.floor(Math.random() * topics.length)];
   try {
-    const url = 'https://query1.finance.yahoo.com/v1/finance/search?q=NVDA&newsCount=8&quotesCount=0';
-    const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' } });
+    const url = 'https://query1.finance.yahoo.com/v1/finance/search?q=' + topic + '&newsCount=10&quotesCount=0';
+    const res = await fetch(url, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36', 'Referer': 'https://finance.yahoo.com' }
+    });
     const data = await res.json();
     const news = (data && data.news) || [];
     priceCache.news = news.map(function(n) {
@@ -87,9 +153,11 @@ async function fetchNews() {
 }
 
 async function refreshAll() {
+  console.log('Refreshing prices...');
   await Promise.all([fetchStockPrices(), fetchNews()]);
   priceCache.updatedAt = new Date().toISOString();
-  console.log('Prices refreshed at', priceCache.updatedAt);
+  const loaded = Object.keys(priceCache.stocks).length;
+  console.log('Prices refreshed: ' + loaded + '/' + HOLDINGS.length + ' tickers loaded at ' + priceCache.updatedAt);
 }
 
 refreshAll();
@@ -111,8 +179,8 @@ function buildPortfolio() {
       plPct: plPct,
       changePct: q.changePct || 0,
       change: q.change || 0,
-      high52: q.high52,
-      low52: q.low52,
+      sparkline: q.sparkline || [],
+      liveData: !!q.price,
     });
   });
   const totalEquity = enriched.reduce(function(a, h) { return a + h.value; }, 0);
@@ -127,6 +195,7 @@ function buildSummary(portfolio) {
   const totalCost = portfolio.reduce(function(a, h) { return a + h.cost; }, 0);
   const totalPL = portfolio.reduce(function(a, h) { return a + h.pl; }, 0);
   const dayChange = portfolio.reduce(function(a, h) { return a + (h.value * (h.changePct / 100)); }, 0);
+  const liveCount = portfolio.filter(function(h) { return h.liveData; }).length;
   return {
     totalValue: totalValue,
     totalCost: totalCost,
@@ -139,6 +208,7 @@ function buildSummary(portfolio) {
     positions: portfolio.length,
     winners: portfolio.filter(function(h) { return h.pl > 0; }).length,
     losers: portfolio.filter(function(h) { return h.pl < 0; }).length,
+    liveCount: liveCount,
     updatedAt: priceCache.updatedAt,
   };
 }
@@ -178,7 +248,8 @@ app.get('/api/prices', function(req, res) {
 });
 
 app.get('/api/health', function(req, res) {
-  res.json({ ok: true, status: 'running', updatedAt: priceCache.updatedAt });
+  const loaded = Object.keys(priceCache.stocks).length;
+  res.json({ ok: true, status: 'running', tickersLoaded: loaded, totalTickers: HOLDINGS.length, updatedAt: priceCache.updatedAt });
 });
 
 app.get('*', function(req, res) {
