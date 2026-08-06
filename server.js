@@ -10,6 +10,8 @@ app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
+const FINNHUB_KEY = process.env.FINNHUB_KEY || 'd9qemfpr01qk3buvleb0d9qemfpr01qk3buvlebg';
+
 const HOLDINGS = [
   { ticker: 'TSLA',  name: 'Tesla',                        type: 'stock', shares: 26,  avgCost: 354.10 },
   { ticker: 'NVDA',  name: 'Nvidia',                       type: 'stock', shares: 50,  avgCost: 159.03 },
@@ -21,7 +23,7 @@ const HOLDINGS = [
   { ticker: 'CRDO',  name: 'Credo Technology',             type: 'stock', shares: 20,  avgCost: 147.99 },
   { ticker: 'MRVL',  name: 'Marvell',                      type: 'stock', shares: 15,  avgCost: 119.34 },
   { ticker: 'QNTM',  name: 'VanEck Quantum Computing ETF', type: 'etf',   shares: 120, avgCost: 22.15  },
-  { ticker: 'BRK-B', name: 'Berkshire Hathaway B',         type: 'stock', shares: 6,   avgCost: 495.59 },
+  { ticker: 'BRK.B', name: 'Berkshire Hathaway B',         type: 'stock', shares: 6,   avgCost: 495.59 },
   { ticker: 'CRWD',  name: 'CrowdStrike',                  type: 'stock', shares: 4,   avgCost: 415.52 },
   { ticker: 'GLW',   name: 'Corning',                      type: 'stock', shares: 15,  avgCost: 158.04 },
   { ticker: 'IEMG',  name: 'iShares Core MSCI EM ETF',     type: 'etf',   shares: 40,  avgCost: 49.35  },
@@ -41,136 +43,89 @@ const HOLDINGS = [
 ];
 
 const CASH = 38971;
-
 let priceCache = { stocks: {}, news: [], updatedAt: null };
 
-// Fetch prices using Yahoo Finance v8 with rotating user agents
-async function fetchStockPrices() {
-  const agents = [
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
-    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36',
-  ];
-  const agent = agents[Math.floor(Math.random() * agents.length)];
+// Fetch one quote from Finnhub
+function fetchQuote(ticker) {
+  var url = 'https://finnhub.io/api/v1/quote?symbol=' + ticker + '&token=' + FINNHUB_KEY;
+  return fetch(url)
+    .then(function(res) { return res.json(); })
+    .then(function(data) {
+      if (data && data.c && data.c > 0) {
+        var change = data.c - data.pc;
+        var changePct = data.pc > 0 ? (change / data.pc) * 100 : 0;
+        priceCache.stocks[ticker] = {
+          price: data.c,
+          change: change,
+          changePct: changePct,
+          prevClose: data.pc,
+          high: data.h,
+          low: data.l,
+          open: data.o,
+        };
+        console.log('OK ' + ticker + ' $' + data.c);
+      } else {
+        console.log('NO DATA ' + ticker);
+      }
+    })
+    .catch(function(e) {
+      console.error('Error ' + ticker + ': ' + e.message);
+    });
+}
 
-  // Fetch in batches of 10 to avoid URL length limits
-  const batches = [];
-  for (let i = 0; i < HOLDINGS.length; i += 10) {
-    batches.push(HOLDINGS.slice(i, i + 10));
-  }
-
-  for (const batch of batches) {
-    const symbols = batch.map(function(h) { return h.ticker; }).join('%2C');
-    const url = 'https://query2.finance.yahoo.com/v8/finance/spark?symbols=' + symbols + '&range=1d&interval=5m';
-    try {
-      const res = await fetch(url, {
-        headers: {
-          'User-Agent': agent,
-          'Accept': '*/*',
-          'Accept-Language': 'en-US,en;q=0.9',
-          'Referer': 'https://finance.yahoo.com',
-          'Origin': 'https://finance.yahoo.com',
-        }
-      });
-      const data = await res.json();
-      const spark = (data && data.spark && data.spark.result) || [];
-      spark.forEach(function(item) {
-        if (!item || !item.symbol) return;
-        const resp = item.response && item.response[0];
-        if (!resp) return;
-        const meta = resp.meta || {};
-        const closes = (resp.indicators && resp.indicators.quote && resp.indicators.quote[0] && resp.indicators.quote[0].close) || [];
-        const validCloses = closes.filter(function(c) { return c !== null && c !== undefined; });
-        const currentPrice = meta.regularMarketPrice || validCloses[validCloses.length - 1];
-        const prevClose = meta.chartPreviousClose || validCloses[0];
-        const change = currentPrice && prevClose ? currentPrice - prevClose : 0;
-        const changePct = prevClose && prevClose !== 0 ? (change / prevClose) * 100 : 0;
-        if (currentPrice) {
-          priceCache.stocks[item.symbol] = {
-            price: currentPrice,
-            change: change,
-            changePct: changePct,
-            prevClose: prevClose,
-            sparkline: validCloses.slice(-20),
-          };
-        }
-      });
-    } catch (e) {
-      console.error('Batch fetch error:', e.message);
+// Fetch all quotes with a small delay between each to respect rate limits (60/min free tier)
+async function fetchAllPrices() {
+  console.log('Fetching ' + HOLDINGS.length + ' tickers from Finnhub...');
+  for (var i = 0; i < HOLDINGS.length; i++) {
+    await fetchQuote(HOLDINGS[i].ticker);
+    // 1.1 second delay = ~54 requests/min, safely under free tier 60/min limit
+    if (i < HOLDINGS.length - 1) {
+      await new Promise(function(r) { setTimeout(r, 1100); });
     }
   }
-
-  // Fallback: try v7 quote endpoint for any missing tickers
-  const missing = HOLDINGS.filter(function(h) { return !priceCache.stocks[h.ticker]; });
-  if (missing.length > 0) {
-    try {
-      const symbols = missing.map(function(h) { return h.ticker; }).join(',');
-      const url = 'https://query1.finance.yahoo.com/v7/finance/quote?symbols=' + symbols;
-      const res = await fetch(url, {
-        headers: { 'User-Agent': agent, 'Referer': 'https://finance.yahoo.com' }
-      });
-      const data = await res.json();
-      const quotes = (data && data.quoteResponse && data.quoteResponse.result) || [];
-      quotes.forEach(function(q) {
-        if (q.regularMarketPrice) {
-          priceCache.stocks[q.symbol] = {
-            price: q.regularMarketPrice,
-            change: q.regularMarketChange || 0,
-            changePct: q.regularMarketChangePercent || 0,
-            prevClose: q.regularMarketPreviousClose || q.regularMarketPrice,
-            sparkline: [],
-          };
-        }
-      });
-    } catch (e) {
-      console.error('Fallback fetch error:', e.message);
-    }
-  }
+  console.log('All tickers fetched. Loaded: ' + Object.keys(priceCache.stocks).length + '/' + HOLDINGS.length);
 }
 
 async function fetchNews() {
-  const topics = ['NVDA', 'TSLA', 'AMD', 'stock+market'];
-  const topic = topics[Math.floor(Math.random() * topics.length)];
   try {
-    const url = 'https://query1.finance.yahoo.com/v1/finance/search?q=' + topic + '&newsCount=10&quotesCount=0';
-    const res = await fetch(url, {
-      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36', 'Referer': 'https://finance.yahoo.com' }
-    });
-    const data = await res.json();
-    const news = (data && data.news) || [];
-    priceCache.news = news.map(function(n) {
-      return {
-        title: n.title,
-        publisher: n.publisher,
-        link: n.link,
-        time: n.providerPublishTime,
-        thumbnail: (n.thumbnail && n.thumbnail.resolutions && n.thumbnail.resolutions[0] && n.thumbnail.resolutions[0].url) || null,
-      };
-    }).slice(0, 10);
+    var url = 'https://finnhub.io/api/v1/news?category=general&token=' + FINNHUB_KEY;
+    var res = await fetch(url);
+    var data = await res.json();
+    if (Array.isArray(data)) {
+      priceCache.news = data.slice(0, 10).map(function(n) {
+        return {
+          title: n.headline,
+          publisher: n.source,
+          link: n.url,
+          time: n.datetime,
+          thumbnail: n.image || null,
+        };
+      });
+      console.log('News loaded: ' + priceCache.news.length + ' articles');
+    }
   } catch (e) {
     console.error('News fetch error:', e.message);
   }
 }
 
 async function refreshAll() {
-  console.log('Refreshing prices...');
-  await Promise.all([fetchStockPrices(), fetchNews()]);
+  await Promise.all([fetchAllPrices(), fetchNews()]);
   priceCache.updatedAt = new Date().toISOString();
-  const loaded = Object.keys(priceCache.stocks).length;
-  console.log('Prices refreshed: ' + loaded + '/' + HOLDINGS.length + ' tickers loaded at ' + priceCache.updatedAt);
+  console.log('Refresh complete at ' + priceCache.updatedAt);
 }
 
+// Initial load + refresh every 2 minutes (27 tickers x 1.1s = ~30s per cycle)
 refreshAll();
-setInterval(refreshAll, 60000);
+setInterval(refreshAll, 120000);
 
 function buildPortfolio() {
-  const enriched = HOLDINGS.map(function(h) {
-    const q = priceCache.stocks[h.ticker] || {};
-    const price = q.price || h.avgCost;
-    const value = price * h.shares;
-    const cost = h.avgCost * h.shares;
-    const pl = value - cost;
-    const plPct = ((price - h.avgCost) / h.avgCost) * 100;
+  var enriched = HOLDINGS.map(function(h) {
+    var q = priceCache.stocks[h.ticker] || {};
+    var price = q.price || h.avgCost;
+    var value = price * h.shares;
+    var cost = h.avgCost * h.shares;
+    var pl = value - cost;
+    var plPct = ((price - h.avgCost) / h.avgCost) * 100;
     return Object.assign({}, h, {
       price: price,
       value: value,
@@ -179,23 +134,23 @@ function buildPortfolio() {
       plPct: plPct,
       changePct: q.changePct || 0,
       change: q.change || 0,
-      sparkline: q.sparkline || [],
+      high: q.high,
+      low: q.low,
       liveData: !!q.price,
     });
   });
-  const totalEquity = enriched.reduce(function(a, h) { return a + h.value; }, 0);
-  const totalValue = totalEquity + CASH;
+  var totalEquity = enriched.reduce(function(a, h) { return a + h.value; }, 0);
+  var totalValue = totalEquity + CASH;
   return enriched.map(function(h) {
     return Object.assign({}, h, { allocPct: (h.value / totalValue) * 100 });
   }).sort(function(a, b) { return b.value - a.value; });
 }
 
 function buildSummary(portfolio) {
-  const totalValue = portfolio.reduce(function(a, h) { return a + h.value; }, 0) + CASH;
-  const totalCost = portfolio.reduce(function(a, h) { return a + h.cost; }, 0);
-  const totalPL = portfolio.reduce(function(a, h) { return a + h.pl; }, 0);
-  const dayChange = portfolio.reduce(function(a, h) { return a + (h.value * (h.changePct / 100)); }, 0);
-  const liveCount = portfolio.filter(function(h) { return h.liveData; }).length;
+  var totalValue = portfolio.reduce(function(a, h) { return a + h.value; }, 0) + CASH;
+  var totalCost = portfolio.reduce(function(a, h) { return a + h.cost; }, 0);
+  var totalPL = portfolio.reduce(function(a, h) { return a + h.pl; }, 0);
+  var dayChange = portfolio.reduce(function(a, h) { return a + (h.value * (h.changePct / 100)); }, 0);
   return {
     totalValue: totalValue,
     totalCost: totalCost,
@@ -208,32 +163,32 @@ function buildSummary(portfolio) {
     positions: portfolio.length,
     winners: portfolio.filter(function(h) { return h.pl > 0; }).length,
     losers: portfolio.filter(function(h) { return h.pl < 0; }).length,
-    liveCount: liveCount,
+    liveCount: portfolio.filter(function(h) { return h.liveData; }).length,
     updatedAt: priceCache.updatedAt,
   };
 }
 
 app.get('/api/portfolio', function(req, res) {
-  const p = buildPortfolio();
+  var p = buildPortfolio();
   res.json({ ok: true, holdings: p, cash: CASH });
 });
 
 app.get('/api/portfolio/summary', function(req, res) {
-  const p = buildPortfolio();
+  var p = buildPortfolio();
   res.json({ ok: true, summary: buildSummary(p) });
 });
 
 app.get('/api/portfolio/:ticker', function(req, res) {
-  const p = buildPortfolio();
-  const h = p.find(function(h) { return h.ticker.toLowerCase() === req.params.ticker.toLowerCase(); });
+  var p = buildPortfolio();
+  var h = p.find(function(h) { return h.ticker.toLowerCase() === req.params.ticker.toLowerCase(); });
   if (!h) return res.status(404).json({ ok: false, error: 'Ticker not found' });
   res.json({ ok: true, holding: h });
 });
 
 app.get('/api/allocation', function(req, res) {
-  const p = buildPortfolio();
-  const s = buildSummary(p);
-  const alloc = p.map(function(h) {
+  var p = buildPortfolio();
+  var s = buildSummary(p);
+  var alloc = p.map(function(h) {
     return { ticker: h.ticker, name: h.name, type: h.type, value: h.value, pct: h.allocPct };
   }).concat([{ ticker: 'CASH', name: 'Cash', type: 'cash', value: CASH, pct: s.cashPct }]);
   res.json({ ok: true, totalValue: s.totalValue, allocation: alloc });
@@ -248,7 +203,7 @@ app.get('/api/prices', function(req, res) {
 });
 
 app.get('/api/health', function(req, res) {
-  const loaded = Object.keys(priceCache.stocks).length;
+  var loaded = Object.keys(priceCache.stocks).length;
   res.json({ ok: true, status: 'running', tickersLoaded: loaded, totalTickers: HOLDINGS.length, updatedAt: priceCache.updatedAt });
 });
 
