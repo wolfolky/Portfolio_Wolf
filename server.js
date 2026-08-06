@@ -1,49 +1,190 @@
-# Portfolio Platform v2
+const express = require('express');
+const cors = require('cors');
+const path = require('path');
+const fetch = require('node-fetch');
 
-Bloomberg-style personal portfolio tracker with **live prices** from Yahoo Finance & CoinGecko.
+const app = express();
+const PORT = process.env.PORT || 3000;
 
-## Deploy to Railway (3 steps)
+app.use(cors());
+app.use(express.json());
+app.use(express.static(path.join(__dirname, 'public')));
 
-1. Push this folder to a new GitHub repo
-2. Go to [railway.app](https://railway.app) → **New Project** → **Deploy from GitHub repo**
-3. Select your repo — Railway auto-detects Node.js and deploys in ~60 seconds
+const HOLDINGS = [
+  { ticker: 'TSLA',  name: 'Tesla',                        type: 'stock', shares: 26,  avgCost: 354.10 },
+  { ticker: 'NVDA',  name: 'Nvidia',                       type: 'stock', shares: 50,  avgCost: 159.03 },
+  { ticker: 'AMD',   name: 'Advanced Micro Devices',       type: 'stock', shares: 20,  avgCost: 124.44 },
+  { ticker: 'GOOG',  name: 'Alphabet Class C',             type: 'stock', shares: 20,  avgCost: 201.83 },
+  { ticker: 'AMZN',  name: 'Amazon',                       type: 'stock', shares: 30,  avgCost: 218.92 },
+  { ticker: 'RKLB',  name: 'Rocket Lab USA',               type: 'stock', shares: 50,  avgCost: 18.95  },
+  { ticker: 'META',  name: 'Meta Platforms',               type: 'stock', shares: 9,   avgCost: 670.96 },
+  { ticker: 'CRDO',  name: 'Credo Technology',             type: 'stock', shares: 20,  avgCost: 147.99 },
+  { ticker: 'MRVL',  name: 'Marvell',                      type: 'stock', shares: 15,  avgCost: 119.34 },
+  { ticker: 'QNTM',  name: 'VanEck Quantum Computing ETF', type: 'etf',   shares: 120, avgCost: 22.15  },
+  { ticker: 'BRK-B', name: 'Berkshire Hathaway B',         type: 'stock', shares: 6,   avgCost: 495.59 },
+  { ticker: 'CRWD',  name: 'CrowdStrike',                  type: 'stock', shares: 4,   avgCost: 415.52 },
+  { ticker: 'GLW',   name: 'Corning',                      type: 'stock', shares: 15,  avgCost: 158.04 },
+  { ticker: 'IEMG',  name: 'iShares Core MSCI EM ETF',     type: 'etf',   shares: 40,  avgCost: 49.35  },
+  { ticker: 'TEM',   name: 'Tempus AI',                    type: 'stock', shares: 50,  avgCost: 65.59  },
+  { ticker: 'CEG',   name: 'Constellation Energy',         type: 'stock', shares: 9,   avgCost: 294.28 },
+  { ticker: 'MSFT',  name: 'Microsoft',                    type: 'stock', shares: 5,   avgCost: 372.40 },
+  { ticker: 'MSTR',  name: 'Strategy (MicroStrategy)',     type: 'stock', shares: 15,  avgCost: 294.34 },
+  { ticker: 'WAL',   name: 'Western Alliance',             type: 'stock', shares: 17,  avgCost: 74.92  },
+  { ticker: 'EOSE',  name: 'Eos Energy',                   type: 'stock', shares: 200, avgCost: 4.11   },
+  { ticker: 'IREN',  name: 'IREN',                         type: 'stock', shares: 20,  avgCost: 53.02  },
+  { ticker: 'ONDS',  name: 'Ondas',                        type: 'stock', shares: 110, avgCost: 9.47   },
+  { ticker: 'ALMU',  name: 'Aeluma',                       type: 'stock', shares: 40,  avgCost: 13.98  },
+  { ticker: 'ASPI',  name: 'ASP Isotopes',                 type: 'stock', shares: 150, avgCost: 11.55  },
+  { ticker: 'MU',    name: 'Micron',                       type: 'stock', shares: 1,   avgCost: 908.05 },
+  { ticker: 'TKR',   name: 'Timken',                       type: 'stock', shares: 6,   avgCost: 102.79 },
+  { ticker: 'ENTG',  name: 'Entegris',                     type: 'stock', shares: 5,   avgCost: 133.58 },
+];
 
-Your live URL: `https://your-app.up.railway.app`
+const CASH = 38971;
 
-## Features
+let priceCache = { stocks: {}, crypto: {}, news: [], updatedAt: null };
 
-- **Live prices** — auto-refreshes every 60 seconds from Yahoo Finance
-- **5 pages** — Overview, Holdings, Charts, News, API Docs
-- **Ticker tape** — scrolling live prices in the top bar
-- **Day movers** — top movers table on overview
-- **Dark Bloomberg-style** UI with IBM Plex Mono font
+async function fetchStockPrices() {
+  const tickers = HOLDINGS.map(h => h.ticker).join(',');
+  try {
+    const url = 'https://query1.finance.yahoo.com/v7/finance/quote?symbols=' + tickers + '&fields=regularMarketPrice,regularMarketChangePercent,regularMarketChange,regularMarketPreviousClose,fiftyTwoWeekHigh,fiftyTwoWeekLow';
+    const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' } });
+    const data = await res.json();
+    const quotes = (data && data.quoteResponse && data.quoteResponse.result) || [];
+    quotes.forEach(function(q) {
+      priceCache.stocks[q.symbol] = {
+        price: q.regularMarketPrice,
+        change: q.regularMarketChange,
+        changePct: q.regularMarketChangePercent,
+        prevClose: q.regularMarketPreviousClose,
+        high52: q.fiftyTwoWeekHigh,
+        low52: q.fiftyTwoWeekLow,
+      };
+    });
+  } catch (e) {
+    console.error('Stock price fetch error:', e.message);
+  }
+}
 
-## API Endpoints
+async function fetchNews() {
+  try {
+    const url = 'https://query1.finance.yahoo.com/v1/finance/search?q=NVDA&newsCount=8&quotesCount=0';
+    const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' } });
+    const data = await res.json();
+    const news = (data && data.news) || [];
+    priceCache.news = news.map(function(n) {
+      return {
+        title: n.title,
+        publisher: n.publisher,
+        link: n.link,
+        time: n.providerPublishTime,
+        thumbnail: (n.thumbnail && n.thumbnail.resolutions && n.thumbnail.resolutions[0] && n.thumbnail.resolutions[0].url) || null,
+      };
+    }).slice(0, 10);
+  } catch (e) {
+    console.error('News fetch error:', e.message);
+  }
+}
 
-| Endpoint | Description |
-|---|---|
-| `GET /api/portfolio` | All holdings with live prices, P&L |
-| `GET /api/portfolio/summary` | Total value, P&L, day change |
-| `GET /api/portfolio/:ticker` | Single holding (e.g. `/api/portfolio/NVDA`) |
-| `GET /api/allocation` | Allocation breakdown |
-| `GET /api/news` | Market news |
-| `GET /api/prices` | Raw price cache |
-| `GET /api/health` | Health check |
+async function refreshAll() {
+  await Promise.all([fetchStockPrices(), fetchNews()]);
+  priceCache.updatedAt = new Date().toISOString();
+  console.log('Prices refreshed at', priceCache.updatedAt);
+}
 
-## Update holdings
+refreshAll();
+setInterval(refreshAll, 60000);
 
-Edit the `HOLDINGS` array in `server.js`:
+function buildPortfolio() {
+  const enriched = HOLDINGS.map(function(h) {
+    const q = priceCache.stocks[h.ticker] || {};
+    const price = q.price || h.avgCost;
+    const value = price * h.shares;
+    const cost = h.avgCost * h.shares;
+    const pl = value - cost;
+    const plPct = ((price - h.avgCost) / h.avgCost) * 100;
+    return Object.assign({}, h, {
+      price: price,
+      value: value,
+      cost: cost,
+      pl: pl,
+      plPct: plPct,
+      changePct: q.changePct || 0,
+      change: q.change || 0,
+      high52: q.high52,
+      low52: q.low52,
+    });
+  });
+  const totalEquity = enriched.reduce(function(a, h) { return a + h.value; }, 0);
+  const totalValue = totalEquity + CASH;
+  return enriched.map(function(h) {
+    return Object.assign({}, h, { allocPct: (h.value / totalValue) * 100 });
+  }).sort(function(a, b) { return b.value - a.value; });
+}
 
-```js
-{ ticker: 'AAPL', name: 'Apple', type: 'stock', shares: 10, avgCost: 150.00 }
-```
+function buildSummary(portfolio) {
+  const totalValue = portfolio.reduce(function(a, h) { return a + h.value; }, 0) + CASH;
+  const totalCost = portfolio.reduce(function(a, h) { return a + h.cost; }, 0);
+  const totalPL = portfolio.reduce(function(a, h) { return a + h.pl; }, 0);
+  const dayChange = portfolio.reduce(function(a, h) { return a + (h.value * (h.changePct / 100)); }, 0);
+  return {
+    totalValue: totalValue,
+    totalCost: totalCost,
+    totalPL: totalPL,
+    plPct: (totalPL / totalCost) * 100,
+    dayChange: dayChange,
+    dayChangePct: (dayChange / totalValue) * 100,
+    cash: CASH,
+    cashPct: (CASH / totalValue) * 100,
+    positions: portfolio.length,
+    winners: portfolio.filter(function(h) { return h.pl > 0; }).length,
+    losers: portfolio.filter(function(h) { return h.pl < 0; }).length,
+    updatedAt: priceCache.updatedAt,
+  };
+}
 
-Types: `stock` / `etf` / `crypto`
+app.get('/api/portfolio', function(req, res) {
+  const p = buildPortfolio();
+  res.json({ ok: true, holdings: p, cash: CASH });
+});
 
-## Run locally
+app.get('/api/portfolio/summary', function(req, res) {
+  const p = buildPortfolio();
+  res.json({ ok: true, summary: buildSummary(p) });
+});
 
-```bash
-npm install
-npm start
-# → http://localhost:3000
-```
+app.get('/api/portfolio/:ticker', function(req, res) {
+  const p = buildPortfolio();
+  const h = p.find(function(h) { return h.ticker.toLowerCase() === req.params.ticker.toLowerCase(); });
+  if (!h) return res.status(404).json({ ok: false, error: 'Ticker not found' });
+  res.json({ ok: true, holding: h });
+});
+
+app.get('/api/allocation', function(req, res) {
+  const p = buildPortfolio();
+  const s = buildSummary(p);
+  const alloc = p.map(function(h) {
+    return { ticker: h.ticker, name: h.name, type: h.type, value: h.value, pct: h.allocPct };
+  }).concat([{ ticker: 'CASH', name: 'Cash', type: 'cash', value: CASH, pct: s.cashPct }]);
+  res.json({ ok: true, totalValue: s.totalValue, allocation: alloc });
+});
+
+app.get('/api/news', function(req, res) {
+  res.json({ ok: true, news: priceCache.news, updatedAt: priceCache.updatedAt });
+});
+
+app.get('/api/prices', function(req, res) {
+  res.json({ ok: true, stocks: priceCache.stocks, updatedAt: priceCache.updatedAt });
+});
+
+app.get('/api/health', function(req, res) {
+  res.json({ ok: true, status: 'running', updatedAt: priceCache.updatedAt });
+});
+
+app.get('*', function(req, res) {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+app.listen(PORT, function() {
+  console.log('Portfolio platform running on port ' + PORT);
+});
