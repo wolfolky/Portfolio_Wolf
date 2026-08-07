@@ -849,7 +849,12 @@ function toggleStatusFields(){
 function renderNews(){
   var c=document.getElementById('news-container');if(!c)return;
   if(!newsData.length){c.innerHTML='<div style="text-align:center;padding:40px;color:var(--hint)">No news available.</div>';return;}
-  c.innerHTML=newsData.map(function(n){var ago=n.time?timeAgo(n.time*1000):'';var img=n.thumbnail?'<img class="news-thumb" src="'+n.thumbnail+'" onerror="this.style.display=\'none\'" alt="">':'<div class="news-thumb"></div>';return'<a class="news-item" href="'+n.link+'" target="_blank" rel="noopener">'+img+'<div><div class="news-title">'+n.title+'</div><div class="news-meta"><span class="news-pub">'+n.publisher+'</span><span>'+ago+'</span></div></div></a>';}).join('');
+  c.innerHTML=newsData.map(function(n){
+    var ago=n.time?timeAgo(n.time*1000):'';
+    var img=n.thumbnail?'<img class="news-thumb" src="'+n.thumbnail+'" onerror="this.style.display=\'none\'" alt="">':'<div class="news-thumb"></div>';
+    var tag=n.symbol?'<span style="font-family:var(--mono);font-size:9px;background:rgba(59,130,246,0.15);color:var(--blue);padding:1px 6px;border-radius:3px;margin-right:6px">'+n.symbol+'</span>':'';
+    return'<a class="news-item" href="'+n.link+'" target="_blank" rel="noopener">'+img+'<div style="flex:1;min-width:0"><div class="news-title">'+n.title+'</div><div class="news-meta">'+tag+'<span class="news-pub">'+n.publisher+'</span><span>'+ago+'</span></div></div></a>';
+  }).join('');
 }
 
 function renderApiDocs(){
