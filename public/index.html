@@ -313,6 +313,35 @@ var nextSec=120;
 var cdInterval=null;
 
 var HIST_KEY='pf_hist_v3';
+// Pre-seed history from transaction data (Mar 2023 - Aug 2026)
+// Only seeds once; real daily tracking takes over from here
+(function(){
+  try{
+    if(!localStorage.getItem('pf_hist_seeded_v3')){
+      var seed=[
+        {d:'2023-03-31',v:49418},{d:'2023-04-30',v:49418},{d:'2023-05-31',v:52132},
+        {d:'2023-06-30',v:73055},{d:'2023-07-31',v:39923},{d:'2023-08-31',v:47128},
+        {d:'2023-09-30',v:47128},{d:'2023-10-31',v:47128},{d:'2023-11-30',v:53766},
+        {d:'2023-12-31',v:67463},{d:'2024-01-31',v:67463},{d:'2024-02-29',v:67463},
+        {d:'2024-03-31',v:64231},{d:'2024-04-30',v:75221},{d:'2024-05-31',v:75221},
+        {d:'2024-06-30',v:75221},{d:'2024-07-31',v:75221},{d:'2024-08-31',v:75221},
+        {d:'2024-09-30',v:77652},{d:'2024-10-31',v:83546},{d:'2024-11-30',v:83546},
+        {d:'2024-12-31',v:90926},{d:'2025-01-31',v:92868},{d:'2025-02-28',v:97690},
+        {d:'2025-03-31',v:139820},{d:'2025-04-30',v:155473},{d:'2025-05-31',v:149365},
+        {d:'2025-06-30',v:162003},{d:'2025-07-31',v:150604},{d:'2025-08-31',v:161980},
+        {d:'2025-09-30',v:156296},{d:'2025-10-31',v:174982},{d:'2025-11-30',v:196283},
+        {d:'2025-12-31',v:207413},{d:'2026-01-31',v:197543},{d:'2026-02-28',v:177655},
+        {d:'2026-03-31',v:186756},{d:'2026-04-30',v:206481},{d:'2026-05-31',v:201200},
+        {d:'2026-06-30',v:206571},{d:'2026-07-31',v:155875},{d:'2026-08-07',v:156686}
+      ];
+      var existing=JSON.parse(localStorage.getItem(HIST_KEY)||'[]');
+      if(existing.length===0){
+        localStorage.setItem(HIST_KEY,JSON.stringify(seed));
+      }
+      localStorage.setItem('pf_hist_seeded_v3','1');
+    }
+  }catch(e){}
+})();
 function saveHistory(v){try{var h=JSON.parse(localStorage.getItem(HIST_KEY)||'[]');var today=new Date().toISOString().slice(0,10);var idx=h.findIndex(function(e){return e.d===today;});var entry={d:today,v:Math.round(v)};if(idx>=0)h[idx]=entry;else h.push(entry);if(h.length>180)h=h.slice(-180);localStorage.setItem(HIST_KEY,JSON.stringify(h));}catch(e){}}
 function getHistory(){try{return JSON.parse(localStorage.getItem(HIST_KEY)||'[]');}catch(e){return[];}}
 
@@ -361,11 +390,36 @@ var BENCHMARKS={week:{spx:1.2,ndx:1.8,ixic:1.9},mtd:{spx:1.2,ndx:1.8,ixic:1.9},y
 
 function getPerf(cur,cost){
   var h=getHistory();
-  function nearest(daysAgo){var target=new Date(Date.now()-daysAgo*86400000).toISOString().slice(0,10);var s=[].concat(h).sort(function(a,b){return a.d>b.d?1:-1;});for(var i=s.length-1;i>=0;i--)if(s[i].d<=target)return s[i].v;return null;}
-  function mtdStart(){var d=new Date();d.setDate(1);var t=d.toISOString().slice(0,10);var s=[].concat(h).sort(function(a,b){return a.d>b.d?1:-1;});for(var i=0;i<s.length;i++)if(s[i].d>=t)return s[i].v;return null;}
-  function ytdStart(){var d=new Date();d.setMonth(0,1);var t=d.toISOString().slice(0,10);var s=[].concat(h).sort(function(a,b){return a.d>b.d?1:-1;});for(var i=0;i<s.length;i++)if(s[i].d>=t)return s[i].v;return null;}
+  // Baseline values derived from full transaction history (Mar 2023 - Aug 2026)
+  // Calculated using cumulative net invested * today's gain ratio + cash
+  // YTD Jan 1 2026: $159,467 | MTD Aug 1 2026: $155,875 | Week Jul 28: $155,875
+  var EST_WEEK=155875, EST_MTD=155875, EST_YTD=159467;
+
+  function nearest(daysAgo,est){
+    var target=new Date(Date.now()-daysAgo*86400000).toISOString().slice(0,10);
+    var s=[].concat(h).sort(function(a,b){return a.d>b.d?1:-1;});
+    for(var i=s.length-1;i>=0;i--)if(s[i].d<=target)return s[i].v;
+    return est; // fallback to estimate
+  }
+  function mtdStart(){
+    var d=new Date();d.setDate(1);var t=d.toISOString().slice(0,10);
+    var s=[].concat(h).sort(function(a,b){return a.d>b.d?1:-1;});
+    for(var i=0;i<s.length;i++)if(s[i].d>=t)return s[i].v;
+    return EST_MTD;
+  }
+  function ytdStart(){
+    var d=new Date();d.setMonth(0,1);var t=d.toISOString().slice(0,10);
+    var s=[].concat(h).sort(function(a,b){return a.d>b.d?1:-1;});
+    for(var i=0;i<s.length;i++)if(s[i].d>=t)return s[i].v;
+    return EST_YTD;
+  }
   function calc(start){if(!start||start===0)return null;var diff=cur-start;return{abs:diff,pct:(diff/start)*100};}
-  return{week:calc(nearest(7)),mtd:calc(mtdStart()),ytd:calc(ytdStart()),alltime:{abs:cur-cost,pct:((cur-cost)/cost)*100}};
+  return{
+    week:calc(nearest(7,EST_WEEK)),
+    mtd:calc(mtdStart()),
+    ytd:calc(ytdStart()),
+    alltime:{abs:cur-cost,pct:((cur-cost)/cost)*100}
+  };
 }
 
 function renderPerfGrid(){
@@ -470,9 +524,10 @@ function makeTxTable(data){
   var pc={stock:'p-stock',etf:'p-etf',crypto:'p-crypto',commodity:'p-commodity'};
   return'<div class="tbl-wrap"><table><thead><tr><th>Symbol</th><th>Name</th><th>Cat</th><th class="r">Deployed</th><th class="r">Received</th><th class="r">Realized P&L</th><th class="r">P&L %</th><th class="r">Status</th></tr></thead><tbody>'+all.map(function(t){
     var plCls=t.pl>0?'green':t.pl<0?'red':'';
-    var plStr=t.received>0?fmtV(t.pl):'—';
-    var plPct=t.received>0&&t.spent>0?fmtP((t.pl/t.spent)*100):'—';
-    var status=t.received>0?'<span style="color:var(--hint)">Closed</span>':'<span style="color:var(--amber)">Open/Partial</span>';
+    var plStr=t.status==='closed'||t.status==='partial'?fmtV(t.pl):'—';
+    var plPct=t.status==='closed'||t.status==='partial'?fmtP((t.pl/t.spent)*100):'—';
+    var statusLabel=t.status==='closed'?'<span style="color:var(--hint)">Closed</span>':t.status==='partial'?'<span style="color:var(--blue)">Partial</span>':'<span style="color:var(--green)">Open</span>';
+    var status=statusLabel;
     return'<tr><td class="t-ticker">'+t.symbol+'</td><td class="t-name" title="'+t.name+'">'+t.name+'</td><td><span class="pill '+(pc[t.category]||'p-stock')+'">'+t.category+'</span></td><td class="r mono">$'+fmt(t.spent,0)+'</td><td class="r mono">$'+fmt(t.received,0)+'</td><td class="r mono '+plCls+'">'+plStr+'</td><td class="r mono '+plCls+'">'+plPct+'</td><td class="r">'+status+'</td></tr>';
   }).join('')+'</tbody></table></div>';
 }
