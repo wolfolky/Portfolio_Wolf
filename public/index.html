@@ -324,24 +324,37 @@ var timeAgo=function(ts){var d=Date.now()-ts,m=Math.floor(d/60000);if(m<1)return
 
 function startCountdown(){if(cdInterval)clearInterval(cdInterval);nextSec=120;cdInterval=setInterval(function(){nextSec--;if(nextSec<=0)nextSec=120;var m=Math.floor(nextSec/60),s=nextSec%60;var el=document.getElementById('s-next');if(el)el.textContent='~'+(m>0?m+'m ':'')+s+'s';},1000);}
 
+async function safeFetch(url){
+  try{var r=await fetch(url);if(!r.ok)return null;return await r.json();}
+  catch(e){console.warn('Fetch failed: '+url,e.message);return null;}
+}
+
 async function loadAll(){
   try{
-    var r1=await fetch('/api/portfolio'),r2=await fetch('/api/portfolio/summary'),r3=await fetch('/api/news'),r4=await fetch('/api/transactions'),r5=await fetch('/api/transactions/categories');
-    var d1=await r1.json(),d2=await r2.json(),d3=await r3.json(),d4=await r4.json(),d5=await r5.json();
-    allHoldings=d1.holdings||[];summary=d2.summary||{};newsData=d3.news||[];txData=d4.transactions||[];catData=d5.categories||[];
+    var d1=await safeFetch('/api/portfolio');
+    var d2=await safeFetch('/api/portfolio/summary');
+    var d3=await safeFetch('/api/news');
+    var d4=await safeFetch('/api/transactions');
+    var d5=await safeFetch('/api/transactions/categories');
+    if(d1&&d1.holdings&&d1.holdings.length>0) allHoldings=d1.holdings;
+    if(d2&&d2.summary) summary=d2.summary;
+    if(d3&&d3.news) newsData=d3.news;
+    if(d4&&d4.transactions) txData=d4.transactions;
+    if(d5&&d5.categories) catData=d5.categories;
+    if(!allHoldings.length){console.warn('No holdings yet, will retry...');return;}
     if(summary.totalValue&&summary.liveCount>0)saveHistory(summary.totalValue);
     var t=summary.updatedAt?new Date(summary.updatedAt).toLocaleTimeString():'—';
     var lu=document.getElementById('last-upd');if(lu)lu.textContent=t;
     var su=document.getElementById('s-upd');
     if(su&&summary.updatedAt){var upd=new Date(summary.updatedAt);var agoM=Math.round((Date.now()-upd)/60000);su.textContent=upd.toLocaleTimeString()+' · '+(agoM<1?'just now':agoM+'m ago');}
-    var sl=document.getElementById('s-live');if(sl)sl.textContent=(summary.liveCount||0)+' / '+summary.positions;
+    var sl=document.getElementById('s-live');if(sl)sl.textContent=(summary.liveCount||0)+' / '+(summary.positions||0);
     var nb=document.getElementById('nb');if(nb)nb.textContent=allHoldings.length;
     startCountdown();
     renderPerfGrid();renderMetrics();renderTape();renderPie();renderBar();renderMovers();
     renderHistory('histChart');renderHistory('hist2Chart');
     renderHoldings();renderCharts();renderNews();renderApiDocs();
     renderHistoryPages();
-  }catch(e){console.error(e);var lu=document.getElementById('last-upd');if(lu)lu.textContent='offline';}
+  }catch(e){console.error('loadAll error:',e);}
 }
 
 var BENCHMARKS={week:{spx:1.2,ndx:1.8,ixic:1.9},mtd:{spx:1.2,ndx:1.8,ixic:1.9},ytd:{spx:13.3,ndx:17.7,ixic:14.8},alltime:{spx:34.5,ndx:47.1,ixic:46.7}};
@@ -558,40 +571,16 @@ function gotoPageByName(name){
   window.scrollTo(0,0);
 }
 
-// Smart startup: retry every 5s until prices load, then switch to 2min refresh
-var mainInterval = null;
-var retryInterval = null;
-
-function startMainRefresh() {
-  if (mainInterval) return;
-  mainInterval = setInterval(loadAll, 120000);
-}
-
-function stopRetry() {
-  if (retryInterval) { clearInterval(retryInterval); retryInterval = null; }
-}
-
-async function loadAllWithRetry() {
-  await loadAll();
-  // If prices loaded, stop retrying
-  if (summary.liveCount && summary.liveCount > 0) {
-    stopRetry();
-    startMainRefresh();
-  }
-}
-
-// Initial load
-loadAllWithRetry();
-
-// Retry every 5 seconds until we get live prices (server still fetching on startup)
-retryInterval = setInterval(function() {
-  if (summary.liveCount && summary.liveCount > 0) {
-    stopRetry();
-    startMainRefresh();
+// Retry every 4s until holdings load, then normal 2min refresh
+loadAll();
+var bootRetry = setInterval(function(){
+  if(allHoldings.length > 0){
+    clearInterval(bootRetry);
+    setInterval(loadAll, 120000);
   } else {
-    loadAllWithRetry();
+    loadAll();
   }
-}, 5000);
+}, 4000);
 </script>
 </body>
 </html>
