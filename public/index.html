@@ -452,34 +452,74 @@ var allHoldings=[],summary={},newsData=[],txData=[],catData=[],cashVal=0;
 var filter='all',sortKey='value',sortDir=-1,currentCat='stock';
 var CH={},nextSec=120,cdInt=null;
 
-// History seeding
-var HIST_KEY='pf_hist_v5';
+// History — v6 with correct baseline values
+var HIST_KEY='pf_hist_v6';
+// Known portfolio values at key dates (derived from transaction history)
+var KNOWN_BASELINES = {
+  '2023-03-23': 49418,   // All-time start
+  '2023-06-30': 73055,
+  '2023-09-30': 33840,
+  '2023-12-31': 67463,
+  '2024-03-31': 64231,
+  '2024-06-30': 75221,
+  '2024-09-30': 77652,
+  '2024-12-31': 90926,
+  '2025-03-31': 139820,
+  '2025-06-30': 162003,
+  '2025-09-30': 156296,
+  '2025-12-31': 207413,   // YTD start
+  '2026-03-31': 186756,
+  '2026-06-30': 206571,
+  '2026-07-31': 155875,   // MTD / Week start (Aug 1 2026)
+};
 (function(){
   try{
-    if(!localStorage.getItem('pf_seeded_v5')){
-      var seed=[
-        {d:'2023-03-31',v:49418},{d:'2023-06-30',v:73055},{d:'2023-09-30',v:47128},
-        {d:'2023-12-31',v:67463},{d:'2024-03-31',v:64231},{d:'2024-06-30',v:75221},
-        {d:'2024-09-30',v:77652},{d:'2024-12-31',v:90926},{d:'2025-03-31',v:139820},
-        {d:'2025-06-30',v:162003},{d:'2025-09-30',v:156296},{d:'2025-12-31',v:207413},
-        {d:'2026-03-31',v:186756},{d:'2026-06-30',v:206571},{d:'2026-07-31',v:155875}
-      ];
-      if(!JSON.parse(localStorage.getItem(HIST_KEY)||'[]').length)localStorage.setItem(HIST_KEY,JSON.stringify(seed));
-      localStorage.setItem('pf_seeded_v5','1');
+    // Always re-seed v6 to fix old bad data
+    if(!localStorage.getItem('pf_seeded_v6')){
+      var seed=Object.keys(KNOWN_BASELINES).map(function(d){return{d:d,v:KNOWN_BASELINES[d]};});
+      localStorage.setItem(HIST_KEY,JSON.stringify(seed));
+      localStorage.setItem('pf_seeded_v6','1');
     }
   }catch(e){}
 })();
 
-function saveHistory(v){try{var h=JSON.parse(localStorage.getItem(HIST_KEY)||'[]'),today=new Date().toISOString().slice(0,10),idx=h.findIndex(function(e){return e.d===today;});if(idx>=0)h[idx].v=Math.round(v);else h.push({d:today,v:Math.round(v)});if(h.length>180)h=h.slice(-180);localStorage.setItem(HIST_KEY,JSON.stringify(h));}catch(e){}}
+function saveHistory(v){
+  try{
+    var h=JSON.parse(localStorage.getItem(HIST_KEY)||'[]');
+    var today=new Date().toISOString().slice(0,10);
+    var idx=h.findIndex(function(e){return e.d===today;});
+    if(idx>=0)h[idx].v=Math.round(v);else h.push({d:today,v:Math.round(v)});
+    if(h.length>200)h=h.slice(-200);
+    localStorage.setItem(HIST_KEY,JSON.stringify(h));
+  }catch(e){}
+}
 function getHistory(){try{return JSON.parse(localStorage.getItem(HIST_KEY)||'[]');}catch(e){return[];}}
-function periodStart(d){var h=getHistory(),s=h.filter(function(e){return e.d<=d;}).sort(function(a,b){return a.d>b.d?-1:1;});return s.length?s[0].v:null;}
+function periodStart(targetDate){
+  var h=getHistory();
+  // Merge localStorage history with known baselines
+  var allData={};
+  Object.keys(KNOWN_BASELINES).forEach(function(d){allData[d]=KNOWN_BASELINES[d];});
+  h.forEach(function(e){allData[e.d]=e.v;});
+  // Find last entry on or before target date
+  var dates=Object.keys(allData).filter(function(d){return d<=targetDate;}).sort();
+  if(!dates.length)return null;
+  return allData[dates[dates.length-1]];
+}
 function getPerf(cur){
   var now=new Date();
-  function calc(start){if(!start)return null;return{abs:cur-start,pct:((cur-start)/start)*100};}
+  function fmt2(n){return n<10?'0'+n:String(n);}
+  function dateStr(d){return d.getFullYear()+'-'+fmt2(d.getMonth()+1)+'-'+fmt2(d.getDate());}
+  function calc(start){if(!start||start===0)return null;return{abs:cur-start,pct:((cur-start)/start)*100};}
+  // Week: last 5 trading days (~7 calendar days)
+  var weekDate=new Date(now.getTime()-7*86400000);
+  // MTD: first day of current month
+  var mtdDate=new Date(now.getFullYear(),now.getMonth(),1);
+  // YTD: Dec 31 of previous year
+  var ytdDate=new Date(now.getFullYear()-1,11,31);
   return{
-    week:calc(periodStart(new Date(now-7*86400000).toISOString().slice(0,10))),
-    mtd:calc(periodStart(new Date(now.getFullYear(),now.getMonth(),1).toISOString().slice(0,10))),
-    ytd:calc(periodStart(new Date(now.getFullYear(),0,1).toISOString().slice(0,10))),
+    week:calc(periodStart(dateStr(weekDate))),
+    mtd:calc(periodStart(dateStr(mtdDate))),
+    ytd:calc(periodStart(dateStr(ytdDate))),
     alltime:calc(periodStart('2023-03-23'))
   };
 }
