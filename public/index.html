@@ -571,16 +571,14 @@ function gotoPageByName(name){
   window.scrollTo(0,0);
 }
 
-// Retry every 4s until holdings load, then normal 2min refresh
+// Load immediately, retry every 5s for first minute, then every 2min
 loadAll();
-var bootRetry = setInterval(function(){
-  if(allHoldings.length > 0){
-    clearInterval(bootRetry);
-    setInterval(loadAll, 120000);
-  } else {
-    loadAll();
-  }
-}, 4000);
+var _retryCount = 0;
+var _bootTimer = setInterval(function(){
+  _retryCount++;
+  loadAll();
+  if(_retryCount >= 12){ clearInterval(_bootTimer); setInterval(loadAll,120000); }
+},5000);
 </script>
 </body>
 </html>
