@@ -558,8 +558,40 @@ function gotoPageByName(name){
   window.scrollTo(0,0);
 }
 
-loadAll();
-setInterval(loadAll,120000);
+// Smart startup: retry every 5s until prices load, then switch to 2min refresh
+var mainInterval = null;
+var retryInterval = null;
+
+function startMainRefresh() {
+  if (mainInterval) return;
+  mainInterval = setInterval(loadAll, 120000);
+}
+
+function stopRetry() {
+  if (retryInterval) { clearInterval(retryInterval); retryInterval = null; }
+}
+
+async function loadAllWithRetry() {
+  await loadAll();
+  // If prices loaded, stop retrying
+  if (summary.liveCount && summary.liveCount > 0) {
+    stopRetry();
+    startMainRefresh();
+  }
+}
+
+// Initial load
+loadAllWithRetry();
+
+// Retry every 5 seconds until we get live prices (server still fetching on startup)
+retryInterval = setInterval(function() {
+  if (summary.liveCount && summary.liveCount > 0) {
+    stopRetry();
+    startMainRefresh();
+  } else {
+    loadAllWithRetry();
+  }
+}, 5000);
 </script>
 </body>
 </html>
