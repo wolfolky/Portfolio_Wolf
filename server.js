@@ -13,8 +13,9 @@ const FINNHUB_KEY = process.env.FINNHUB_KEY || 'd9qemfpr01qk3buvleb0d9qemfpr01qk
 
 // ── Default holdings (overridden by in-memory user edits via API) ──────────
 var DEFAULT_HOLDINGS = [
-  // STOCKS (25 open positions — verified from Excel: net = total bought - total sold)
+  // STOCKS (26 open positions — verified from updated Excel)
   { ticker:'ALMU', name:'Aeluma',                        type:'stock',  shares:105,       avgCost:15.95   },
+  { ticker:'AMD',  name:'Advanced Micro Devices',        type:'stock',  shares:16,        avgCost:119.21  },
   { ticker:'AMZN', name:'Amazon',                        type:'stock',  shares:20,        avgCost:147.08  },
   { ticker:'ASPI', name:'ASP Isotopes',                  type:'stock',  shares:150,       avgCost:11.55   },
   { ticker:'ASTS', name:'AST SpaceMobile',               type:'stock',  shares:42,        avgCost:72.16   },
@@ -33,17 +34,17 @@ var DEFAULT_HOLDINGS = [
   { ticker:'MSFT', name:'Microsoft',                     type:'stock',  shares:5,         avgCost:394.69  },
   { ticker:'MSTR', name:'MicroStrategy',                 type:'stock',  shares:15,        avgCost:305.06  },
   { ticker:'MU',   name:'Micron Technology',             type:'stock',  shares:6,         avgCost:955.54  },
-  { ticker:'NVDA', name:'Nvidia',                        type:'stock',  shares:45,        avgCost:157.91  },
+  { ticker:'NVDA', name:'Nvidia',                        type:'stock',  shares:65,        avgCost:164.90  },
   { ticker:'ONDS', name:'Ondas',                         type:'stock',  shares:220,       avgCost:9.20    },
   { ticker:'RKLB', name:'Rocket Lab USA',                type:'stock',  shares:40,        avgCost:18.95   },
   { ticker:'SPCX', name:'SpaceX',                        type:'stock',  shares:40,        avgCost:126.23  },
   { ticker:'TEM',  name:'Tempus AI',                     type:'stock',  shares:50,        avgCost:65.59   },
   { ticker:'TSLA', name:'Tesla',                         type:'stock',  shares:29,        avgCost:277.63  },
-  // ETFs (3 open — European UCITS ETFs, traded on London Stock Exchange)
+  // ETFs — European UCITS (prices fetched via Yahoo Finance fallback, stored in USD)
   { ticker:'IEMA', name:'iShares MSCI EM UCITS ETF',     type:'etf',    shares:40,        avgCost:57.80   },
   { ticker:'QUTM', name:'VanEck Quantum Computing ETF',  type:'etf',    shares:120,       avgCost:23.57   },
   { ticker:'SEC0', name:'iShares Global Semiconductors', type:'etf',    shares:50,        avgCost:23.34   },
-  // Crypto (5 open positions)
+  // Crypto
   { ticker:'BTC',  name:'Bitcoin',                       type:'crypto', shares:0.067169,  avgCost:101815  },
   { ticker:'ETH',  name:'Ethereum',                      type:'crypto', shares:1,         avgCost:3546.26 },
   { ticker:'NEXO', name:'NEXO',                          type:'crypto', shares:2723.58,   avgCost:1.26    },
@@ -150,19 +151,25 @@ HOLDINGS.forEach(function(h){
 
 function delay(ms){return new Promise(function(r){setTimeout(r,ms);});}
 
-// Map portfolio tickers to Finnhub symbols
+// Finnhub ticker map: crypto needs Binance prefix
 var TICKER_MAP = {
-  // Crypto — Binance exchange prefix required
   'BTC':  'BINANCE:BTCUSDT',
   'ETH':  'BINANCE:ETHUSDT',
   'XRP':  'BINANCE:XRPUSDT',
   'NEXO': 'BINANCE:NEXOUSDT',
   'RND':  'BINANCE:RENDERUSDT',
-  // European ETFs — London Stock Exchange
-  'IEMA': 'IEMA.L',
-  'QUTM': 'QUTM.L',
-  'SEC0': 'SEC0.L',
 };
+
+// European ETFs that can't be fetched from Finnhub — use Yahoo Finance instead
+// Yahoo tickers: IEMA.L (GBX), QUTM.NA (EUR), SEC0.L (GBX)
+// We fetch these separately and convert to USD
+var ETF_YAHOO_MAP = {
+  'IEMA': { yahoo: 'IEMA.L',  currency: 'GBX' },  // GBX = pence, divide by 100 for GBP, then *1.27 for USD
+  'QUTM': { yahoo: 'QUTM.NA', currency: 'EUR' },  // EUR -> USD * 1.09
+  'SEC0': { yahoo: 'SEC0.L',  currency: 'GBX' },
+};
+
+var FX = { GBX: 0.0127, EUR: 1.09, USD: 1 }; // approx rates to USD — update manually if needed
 
 async function fetchQuote(ticker){
   var fsym = TICKER_MAP[ticker] || ticker;
@@ -178,13 +185,45 @@ async function fetchQuote(ticker){
   return false;
 }
 
+async function fetchEtfPrice(ticker){
+  var info = ETF_YAHOO_MAP[ticker];
+  if(!info) return false;
+  try{
+    var url = 'https://query1.finance.yahoo.com/v8/finance/spark?symbols='+info.yahoo+'&range=1d&interval=5m';
+    var res = await fetch(url, {headers:{'User-Agent':'Mozilla/5.0','Referer':'https://finance.yahoo.com'}});
+    var d = await res.json();
+    var result = d && d.spark && d.spark.result && d.spark.result[0];
+    if(!result) return false;
+    var meta = result.response && result.response[0] && result.response[0].meta;
+    if(!meta || !meta.regularMarketPrice) return false;
+    var rawPrice = meta.regularMarketPrice;
+    var prevRaw = meta.chartPreviousClose || rawPrice;
+    var fx = FX[info.currency] || 1;
+    var price = rawPrice * fx;
+    var prev = prevRaw * fx;
+    var change = price - prev;
+    var changePct = prev > 0 ? (change/prev)*100 : 0;
+    priceCache.stocks[ticker] = {price:parseFloat(price.toFixed(2)),change:parseFloat(change.toFixed(2)),changePct:parseFloat(changePct.toFixed(4)),prevClose:parseFloat(prev.toFixed(2)),seeded:false};
+    console.log('ETF OK '+ticker+' raw='+rawPrice+' fx='+fx+' usd=$'+price.toFixed(2));
+    return true;
+  }catch(e){console.error('ETF fetch error '+ticker+':'+e.message);return false;}
+}
+
 async function fetchAllPrices(){
   var tickers=[...new Set(HOLDINGS.map(function(h){return h.ticker;}))];
-  // Seed any new tickers
+  // Seed any new tickers with avg cost
   tickers.forEach(function(t){if(!priceCache.stocks[t]){var h=HOLDINGS.find(function(x){return x.ticker===t;});if(h)priceCache.stocks[t]={price:h.avgCost,change:0,changePct:0,seeded:true};}});
-  for(var i=0;i<tickers.length;i++){
-    await fetchQuote(tickers[i]);
-    if(i<tickers.length-1)await delay(1200);
+  // Fetch European ETFs via Yahoo Finance
+  var etfTickers = Object.keys(ETF_YAHOO_MAP);
+  for(var i=0;i<etfTickers.length;i++){
+    await fetchEtfPrice(etfTickers[i]);
+    await delay(600);
+  }
+  // Fetch everything else via Finnhub
+  var finnhubTickers = tickers.filter(function(t){return !ETF_YAHOO_MAP[t];});
+  for(var i=0;i<finnhubTickers.length;i++){
+    await fetchQuote(finnhubTickers[i]);
+    if(i<finnhubTickers.length-1)await delay(1200);
   }
   priceCache.updatedAt=new Date().toISOString();
 }
