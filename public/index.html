@@ -518,6 +518,7 @@ function renderCharts(){
 }
 
 function makeTxTable(data){
+  if(!data||!data.length)return'<p style="color:var(--hint);padding:20px;text-align:center">No data</p>';
   var closed=data.filter(function(t){return t.received>0;}).sort(function(a,b){return b.pl-a.pl;});
   var open=data.filter(function(t){return t.received===0;});
   var all=[].concat(closed,open);
@@ -534,6 +535,7 @@ function makeTxTable(data){
 }
 
 function makeSummaryBar(data,cat){
+  if(!data||!data.length)return'';
   var spent=data.reduce(function(a,t){return a+t.spent;},0);
   var received=data.reduce(function(a,t){return a+t.received;},0);
   var pl=data.filter(function(t){return t.status==='closed'||t.status==='partial';}).reduce(function(a,t){return a+t.pl;},0);
@@ -550,7 +552,8 @@ function makeSummaryBar(data,cat){
 function makePLChart(id,data){
   var cv=document.getElementById(id);if(!cv)return;
   var closed=data.filter(function(t){return (t.status==='closed'||t.status==='partial')&&t.pl!==0;}).sort(function(a,b){return b.pl-a.pl;});
-  if(!closed.length){cv.parentElement.innerHTML='<p style="color:var(--hint);padding:20px;text-align:center;font-size:12px">No closed positions yet</p>';return;}
+  if(!closed.length){cv.style.display='none';return;}
+  cv.style.display='';
   if(charts[id])charts[id].destroy();
   charts[id]=new Chart(cv,{type:'bar',data:{labels:closed.map(function(t){return t.symbol;}),datasets:[{data:closed.map(function(t){return t.pl;}),backgroundColor:closed.map(function(t){return t.pl>=0?'rgba(0,214,143,0.7)':'rgba(255,77,77,0.7)';}),borderRadius:3,borderSkipped:false}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:function(ctx){return(ctx.raw>=0?'+':'')+' $'+fmt(ctx.raw,0);}}}},scales:{x:{grid:{display:false},ticks:{color:'#3d5068',font:{size:9,family:'IBM Plex Mono'}}},y:{grid:{color:'rgba(255,255,255,0.04)'},ticks:{color:'#3d5068',font:{size:9,family:'IBM Plex Mono'},callback:function(v){return(v>=0?'+':'')+Math.round(v/1000)+'k';}}}}}});
 }
@@ -619,12 +622,19 @@ function gotoPage(name,el,isMobile){
   if(isMobile){document.querySelectorAll('.bnav-item').forEach(function(b){b.classList.remove('active');});}
   else{document.querySelectorAll('.nav-item').forEach(function(b){b.classList.remove('active');});}
   el.classList.add('active');window.scrollTo(0,0);
+  // Re-render history pages when navigating to them (in case txData loaded after initial render)
+  if(['history','stocks-hist','etf-hist','crypto-hist','commodity-hist'].indexOf(name)>=0){
+    if(txData.length>0)renderHistoryPages();
+  }
 }
 function gotoPageByName(name){
   document.querySelectorAll('.page').forEach(function(p){p.classList.remove('active');});
   var pg=document.getElementById('page-'+name);if(pg)pg.classList.add('active');
   document.querySelectorAll('.nav-item,.bnav-item').forEach(function(b){b.classList.remove('active');});
   window.scrollTo(0,0);
+  if(['history','stocks-hist','etf-hist','crypto-hist','commodity-hist'].indexOf(name)>=0){
+    if(txData.length>0)renderHistoryPages();
+  }
 }
 
 // Load immediately, retry every 5s for first minute, then every 2min
