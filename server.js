@@ -147,9 +147,19 @@ HOLDINGS.forEach(function(h){
 
 function delay(ms){return new Promise(function(r){setTimeout(r,ms);});}
 
+// Map portfolio tickers to Finnhub symbols (crypto needs exchange prefix)
+var TICKER_MAP = {
+  'BTC':  'BINANCE:BTCUSDT',
+  'ETH':  'BINANCE:ETHUSDT',
+  'XRP':  'BINANCE:XRPUSDT',
+  'NEXO': 'BINANCE:NEXOUSDT',
+  'RND':  'BINANCE:RENDERUSDT',
+};
+
 async function fetchQuote(ticker){
+  var fsym = TICKER_MAP[ticker] || ticker;
   try{
-    var res=await fetch('https://finnhub.io/api/v1/quote?symbol='+ticker+'&token='+FINNHUB_KEY,{headers:{'User-Agent':'Mozilla/5.0'}});
+    var res=await fetch('https://finnhub.io/api/v1/quote?symbol='+fsym+'&token='+FINNHUB_KEY,{headers:{'User-Agent':'Mozilla/5.0'}});
     var d=await res.json();
     if(d&&d.c&&d.c>0){
       var chg=d.c-d.pc,pct=d.pc>0?(chg/d.pc)*100:0;
@@ -171,12 +181,51 @@ async function fetchAllPrices(){
   priceCache.updatedAt=new Date().toISOString();
 }
 
+// Rotate through top holdings for targeted news
+var NEWS_TICKERS = ['AMZN','META','TSLA','MSFT','NVDA','MSTR','GOOG','CRDO','MRVL','CEG','RKLB','ASTS','MU','TEM','EOSE'];
+var newsTickerIdx = 0;
+
 async function fetchNews(){
   try{
-    var res=await fetch('https://finnhub.io/api/v1/news?category=general&token='+FINNHUB_KEY);
-    var d=await res.json();
-    if(Array.isArray(d))priceCache.news=d.slice(0,10).map(function(n){return{title:n.headline,publisher:n.source,link:n.url,time:n.datetime,thumbnail:n.image||null};});
-  }catch(e){}
+    var allNews = [];
+    // Fetch from 3 different tickers to get relevant news
+    for(var i = 0; i < 3; i++){
+      var sym = NEWS_TICKERS[(newsTickerIdx + i) % NEWS_TICKERS.length];
+      var url = 'https://finnhub.io/api/v1/company-news?symbol='+sym+'&from='+getDateStr(7)+'&to='+getDateStr(0)+'&token='+FINNHUB_KEY;
+      try{
+        var res = await fetch(url, {headers:{'User-Agent':'Mozilla/5.0'}});
+        var d = await res.json();
+        if(Array.isArray(d) && d.length){
+          var mapped = d.slice(0,4).map(function(n){
+            return{title:n.headline,publisher:n.source,link:n.url,time:n.datetime,thumbnail:n.image||null,symbol:sym};
+          });
+          allNews = allNews.concat(mapped);
+        }
+      }catch(e){}
+      await new Promise(function(r){setTimeout(r,500);});
+    }
+    // Deduplicate by headline and sort by time
+    var seen = {};
+    allNews = allNews.filter(function(n){
+      if(seen[n.title])return false;
+      seen[n.title]=true;return true;
+    }).sort(function(a,b){return b.time-a.time;}).slice(0,15);
+
+    if(allNews.length > 0) priceCache.news = allNews;
+    // Also fall back to general market news if not enough
+    if(allNews.length < 5){
+      var gres = await fetch('https://finnhub.io/api/v1/news?category=general&token='+FINNHUB_KEY);
+      var gd = await gres.json();
+      if(Array.isArray(gd)) priceCache.news = priceCache.news.concat(gd.slice(0,5).map(function(n){return{title:n.headline,publisher:n.source,link:n.url,time:n.datetime,thumbnail:n.image||null};}));
+      priceCache.news = priceCache.news.slice(0,15);
+    }
+    newsTickerIdx = (newsTickerIdx + 3) % NEWS_TICKERS.length;
+  }catch(e){console.error('News error:',e.message);}
+}
+
+function getDateStr(daysAgo){
+  var d = new Date(Date.now() - daysAgo*86400000);
+  return d.toISOString().slice(0,10);
 }
 
 fetchAllPrices().then(fetchNews);
