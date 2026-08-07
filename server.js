@@ -13,39 +13,42 @@ const FINNHUB_KEY = process.env.FINNHUB_KEY || 'd9qemfpr01qk3buvleb0d9qemfpr01qk
 
 // ── Default holdings (overridden by in-memory user edits via API) ──────────
 var DEFAULT_HOLDINGS = [
-  { ticker:'AMZN', name:'Amazon',                   type:'stock',  shares:20,      avgCost:147.08 },
-  { ticker:'META', name:'Meta Platforms',            type:'stock',  shares:10,      avgCost:423.12 },
-  { ticker:'TSLA', name:'Tesla',                     type:'stock',  shares:29,      avgCost:277.63 },
-  { ticker:'MSFT', name:'Microsoft',                 type:'stock',  shares:5,       avgCost:394.69 },
-  { ticker:'NVDA', name:'Nvidia',                    type:'stock',  shares:45,      avgCost:157.91 },
-  { ticker:'MSTR', name:'MicroStrategy',             type:'stock',  shares:15,      avgCost:305.06 },
-  { ticker:'MU',   name:'Micron Technology',         type:'stock',  shares:6,       avgCost:955.54 },
-  { ticker:'CEG',  name:'Constellation Energy',      type:'stock',  shares:12,      avgCost:298.58 },
-  { ticker:'SPCX', name:'SpaceX',                    type:'stock',  shares:40,      avgCost:126.23 },
-  { ticker:'GOOG', name:'Alphabet Class A',          type:'stock',  shares:20,      avgCost:197.81 },
-  { ticker:'MRVL', name:'Marvell Technology',        type:'stock',  shares:20,      avgCost:131.50 },
-  { ticker:'CRDO', name:'Credo Technology',          type:'stock',  shares:20,      avgCost:146.60 },
-  { ticker:'TEM',  name:'Tempus AI',                 type:'stock',  shares:50,      avgCost:65.59  },
-  { ticker:'EOSE', name:'Eos Energy',                type:'stock',  shares:380,     avgCost:4.66   },
-  { ticker:'GLW',  name:'Corning',                   type:'stock',  shares:15,      avgCost:154.56 },
-  { ticker:'ASTS', name:'AST SpaceMobile',           type:'stock',  shares:42,      avgCost:72.16  },
-  { ticker:'ONDS', name:'Ondas',                     type:'stock',  shares:220,     avgCost:9.20   },
-  { ticker:'ENTG', name:'Entegris',                  type:'stock',  shares:10,      avgCost:150.59 },
-  { ticker:'ALMU', name:'Aeluma',                    type:'stock',  shares:105,     avgCost:15.95  },
-  { ticker:'HL',   name:'Hecla Mining',              type:'stock',  shares:140,     avgCost:15.29  },
-  { ticker:'MP',   name:'MP Materials',              type:'stock',  shares:40,      avgCost:48.66  },
-  { ticker:'ASPI', name:'ASP Isotopes',              type:'stock',  shares:150,     avgCost:11.55  },
-  { ticker:'IREN', name:'IREN',                      type:'stock',  shares:20,      avgCost:57.36  },
-  { ticker:'RKLB', name:'Rocket Lab USA',            type:'stock',  shares:40,      avgCost:18.95  },
-  { ticker:'FCX',  name:'Freeport-McMoRan',          type:'stock',  shares:20,      avgCost:61.50  },
-  { ticker:'QNTM', name:'VanEck Quantum ETF',        type:'etf',    shares:120,     avgCost:23.57  },
-  { ticker:'IEMG', name:'iShares MSCI EM ETF',       type:'etf',    shares:40,      avgCost:57.80  },
-  { ticker:'SEC0', name:'iShares Semiconductors ETF',type:'etf',    shares:50,      avgCost:23.34  },
-  { ticker:'BTC',  name:'Bitcoin',                   type:'crypto', shares:0.067169,avgCost:101815 },
-  { ticker:'XRP',  name:'Ripple',                    type:'crypto', shares:800,     avgCost:2.61   },
-  { ticker:'ETH',  name:'Ethereum',                  type:'crypto', shares:1,       avgCost:3546   },
-  { ticker:'NEXO', name:'NEXO',                      type:'crypto', shares:2723.58, avgCost:1.26   },
-  { ticker:'RND',  name:'Render',                    type:'crypto', shares:300,     avgCost:3.85   },
+  // STOCKS (25 open positions — verified from Excel: net = total bought - total sold)
+  { ticker:'ALMU', name:'Aeluma',                        type:'stock',  shares:105,       avgCost:15.95   },
+  { ticker:'AMZN', name:'Amazon',                        type:'stock',  shares:20,        avgCost:147.08  },
+  { ticker:'ASPI', name:'ASP Isotopes',                  type:'stock',  shares:150,       avgCost:11.55   },
+  { ticker:'ASTS', name:'AST SpaceMobile',               type:'stock',  shares:42,        avgCost:72.16   },
+  { ticker:'CEG',  name:'Constellation Energy',          type:'stock',  shares:12,        avgCost:298.58  },
+  { ticker:'CRDO', name:'Credo Technology',              type:'stock',  shares:20,        avgCost:146.60  },
+  { ticker:'ENTG', name:'Entegris',                      type:'stock',  shares:10,        avgCost:150.59  },
+  { ticker:'EOSE', name:'Eos Energy',                    type:'stock',  shares:380,       avgCost:4.66    },
+  { ticker:'FCX',  name:'Freeport-McMoRan',              type:'stock',  shares:20,        avgCost:61.50   },
+  { ticker:'GLW',  name:'Corning',                       type:'stock',  shares:15,        avgCost:154.56  },
+  { ticker:'GOOG', name:'Alphabet Class A',              type:'stock',  shares:20,        avgCost:197.81  },
+  { ticker:'HL',   name:'Hecla Mining',                  type:'stock',  shares:140,       avgCost:15.29   },
+  { ticker:'IREN', name:'IREN',                          type:'stock',  shares:20,        avgCost:57.36   },
+  { ticker:'META', name:'Meta Platforms',                type:'stock',  shares:10,        avgCost:423.12  },
+  { ticker:'MP',   name:'MP Materials',                  type:'stock',  shares:40,        avgCost:48.66   },
+  { ticker:'MRVL', name:'Marvell Technology',            type:'stock',  shares:20,        avgCost:131.50  },
+  { ticker:'MSFT', name:'Microsoft',                     type:'stock',  shares:5,         avgCost:394.69  },
+  { ticker:'MSTR', name:'MicroStrategy',                 type:'stock',  shares:15,        avgCost:305.06  },
+  { ticker:'MU',   name:'Micron Technology',             type:'stock',  shares:6,         avgCost:955.54  },
+  { ticker:'NVDA', name:'Nvidia',                        type:'stock',  shares:45,        avgCost:157.91  },
+  { ticker:'ONDS', name:'Ondas',                         type:'stock',  shares:220,       avgCost:9.20    },
+  { ticker:'RKLB', name:'Rocket Lab USA',                type:'stock',  shares:40,        avgCost:18.95   },
+  { ticker:'SPCX', name:'SpaceX',                        type:'stock',  shares:40,        avgCost:126.23  },
+  { ticker:'TEM',  name:'Tempus AI',                     type:'stock',  shares:50,        avgCost:65.59   },
+  { ticker:'TSLA', name:'Tesla',                         type:'stock',  shares:29,        avgCost:277.63  },
+  // ETFs (3 open — European UCITS ETFs, traded on London Stock Exchange)
+  { ticker:'IEMA', name:'iShares MSCI EM UCITS ETF',     type:'etf',    shares:40,        avgCost:57.80   },
+  { ticker:'QUTM', name:'VanEck Quantum Computing ETF',  type:'etf',    shares:120,       avgCost:23.57   },
+  { ticker:'SEC0', name:'iShares Global Semiconductors', type:'etf',    shares:50,        avgCost:23.34   },
+  // Crypto (5 open positions)
+  { ticker:'BTC',  name:'Bitcoin',                       type:'crypto', shares:0.067169,  avgCost:101815  },
+  { ticker:'ETH',  name:'Ethereum',                      type:'crypto', shares:1,         avgCost:3546.26 },
+  { ticker:'NEXO', name:'NEXO',                          type:'crypto', shares:2723.58,   avgCost:1.26    },
+  { ticker:'RND',  name:'Render',                        type:'crypto', shares:300,       avgCost:3.85    },
+  { ticker:'XRP',  name:'Ripple',                        type:'crypto', shares:800,       avgCost:2.61    },
 ];
 
 // Default transactions from Excel history
@@ -147,13 +150,18 @@ HOLDINGS.forEach(function(h){
 
 function delay(ms){return new Promise(function(r){setTimeout(r,ms);});}
 
-// Map portfolio tickers to Finnhub symbols (crypto needs exchange prefix)
+// Map portfolio tickers to Finnhub symbols
 var TICKER_MAP = {
+  // Crypto — Binance exchange prefix required
   'BTC':  'BINANCE:BTCUSDT',
   'ETH':  'BINANCE:ETHUSDT',
   'XRP':  'BINANCE:XRPUSDT',
   'NEXO': 'BINANCE:NEXOUSDT',
   'RND':  'BINANCE:RENDERUSDT',
+  // European ETFs — London Stock Exchange
+  'IEMA': 'IEMA.L',
+  'QUTM': 'QUTM.L',
+  'SEC0': 'SEC0.L',
 };
 
 async function fetchQuote(ticker){
