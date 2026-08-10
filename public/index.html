@@ -503,11 +503,18 @@ function getPerf(cur){
   var weekDate=new Date(now.getTime()-7*86400000);
   var mtdDate=new Date(now.getFullYear(),now.getMonth(),1);
   var ytdDate=new Date(now.getFullYear()-1,11,31);
-  // All Time: use unrealized P&L from server (current equity - cost basis of current holdings)
-  // This is the only meaningful "all time" metric — how much the CURRENT positions are up/down
-  var alltimeAbs = summary.totalPL || 0;
-  var alltimePct = summary.plPct || 0;
-  var alltimeResult = (alltimeAbs !== 0) ? {abs: alltimeAbs, pct: alltimePct} : null;
+  // All Time = unrealized P&L on open positions + realized P&L on all closed positions
+  // This gives the complete picture: how profitable has the portfolio been since inception
+  var unrealizedPL = summary.totalPL || 0;          // current holdings: market value - cost basis
+  var realizedPL = txData.filter(function(t){        // closed positions: what was actually banked
+    return t.status==='closed';
+  }).reduce(function(a,t){return a+t.pl;},0);
+  var totalCostBasis = summary.totalCost || 0;       // cost basis of current open holdings
+  var totalSpentEver = txData.reduce(function(a,t){return a+t.spent;},0); // all capital ever deployed
+  var alltimeAbs = unrealizedPL + realizedPL;
+  // % = total P&L / total capital ever deployed (gives true ROI across all trades)
+  var alltimePct = totalSpentEver > 0 ? (alltimeAbs / totalSpentEver) * 100 : 0;
+  var alltimeResult = (summary.liveCount > 0) ? {abs: alltimeAbs, pct: alltimePct} : null;
   return{
     week: calc(periodStart(dateStr(weekDate))),
     mtd:  calc(periodStart(dateStr(mtdDate))),
@@ -624,24 +631,37 @@ function renderPerfGrid(){
 
 function perfCardAllTime(data){
   var cls=data&&data.pct>=0?'green':'red';
+  var unrealized=summary.totalPL||0;
+  var realized=txData.filter(function(t){return t.status==='closed';}).reduce(function(a,t){return a+t.pl;},0);
+  var sub=data?'<span style="color:var(--hint);font-size:9px">Unreal '+fmtV(unrealized)+'&nbsp;&nbsp;Real '+fmtV(realized)+'</span>':'<span style="color:var(--hint);font-size:10px">loading…</span>';
   return '<div class="perf-card">'+
-    '<div class="perf-lbl">All Time · Unrealized P&L</div>'+
+    '<div class="perf-lbl">All Time · Total ROI</div>'+
     '<div class="perf-pct '+(data?cls:'')+'">'+(data?fmtP(data.pct):'—')+'</div>'+
     '<div class="perf-abs '+(data?cls:'')+'">'+(data?fmtV(data.abs):'—')+'</div>'+
-    '<div class="perf-bench" style="border-top:1px solid var(--border);padding-top:7px">'+
-      '<span style="font-size:10px;color:var(--hint)">Current holdings vs cost basis</span>'+
-    '</div>'+
+    '<div class="perf-bench" style="border-top:1px solid var(--border);padding-top:7px">'+sub+'</div>'+
   '</div>';
 }
 
 function renderMetrics(){
   var s=summary;
   var m=document.getElementById('metrics');if(!m)return;
+  // Compute per-category values
+  var cats=['stock','etf','crypto','commodity'];
+  var catVals={};
+  cats.forEach(function(cat){
+    var h=allHoldings.filter(function(x){return x.type===cat;});
+    catVals[cat]={val:h.reduce(function(a,x){return a+x.value;},0),pl:h.reduce(function(a,x){return a+x.pl;},0)};
+  });
+  var stockVal=catVals.stock.val, etfVal=catVals.etf.val, cryptoVal=catVals.crypto.val;
+  var breakdown='<span style="font-family:var(--mono);font-size:9px;color:var(--hint)">'+
+    'Stk $'+fmt(stockVal,0)+' &nbsp; ETF $'+fmt(etfVal,0)+' &nbsp; Crypto $'+fmt(cryptoVal,0)+'</span>';
+  var realizedPL=txData.filter(function(t){return t.status==='closed';}).reduce(function(a,t){return a+t.pl;},0);
+  var totalPL=(s.totalPL||0)+realizedPL;
   m.innerHTML=
-    '<div class="metric"><div class="lbl">Portfolio value</div><div class="val">$'+fmt(s.totalValue||0,0)+'</div><div class="sub" style="color:var(--hint)">equity only</div></div>'+
-    '<div class="metric"><div class="lbl">Cash</div><div class="val blue">$'+fmt(cashVal,0)+'</div><div class="sub" style="color:var(--hint)">total: $'+fmt((s.totalValue||0)+cashVal,0)+'</div></div>'+
-    '<div class="metric"><div class="lbl">Day change</div><div class="val '+(s.dayChange>=0?'green':'red')+'">'+fmtV(s.dayChange||0)+'</div><div class="sub '+(s.dayChange>=0?'green':'red')+'">'+fmtP(s.dayChangePct||0)+'</div></div>'+
-    '<div class="metric"><div class="lbl">Winners / Losers</div><div class="val"><span class="green">'+(s.winners||0)+'</span><span style="color:var(--hint)"> / </span><span class="red">'+(s.losers||0)+'</span></div><div class="sub" style="color:var(--hint)">'+(s.positions||0)+' positions</div></div>';
+    '<div class="metric"><div class="lbl">Portfolio value</div><div class="val">$'+fmt(s.totalValue||0,0)+'</div><div class="sub">'+breakdown+'</div></div>'+
+    '<div class="metric"><div class="lbl">Cash</div><div class="val blue">$'+fmt(cashVal,0)+'</div><div class="sub" style="color:var(--hint)">total incl. cash: $'+fmt((s.totalValue||0)+cashVal,0)+'</div></div>'+
+    '<div class="metric"><div class="lbl">Day change</div><div class="val '+(s.dayChange>=0?'green':'red')+'">'+fmtV(s.dayChange||0)+'</div><div class="sub '+(s.dayChange>=0?'green':'red')+'">'+fmtP(s.dayChangePct||0)+' · all positions</div></div>'+
+    '<div class="metric"><div class="lbl">Winners / Losers</div><div class="val"><span class="green">'+(s.winners||0)+'</span><span style="color:var(--hint)"> / </span><span class="red">'+(s.losers||0)+'</span></div><div class="sub" style="color:var(--hint)">'+(s.positions||0)+' open positions</div></div>';
 }
 
 function renderTape(){
