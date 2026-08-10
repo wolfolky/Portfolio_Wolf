@@ -41,9 +41,9 @@ var DEFAULT_HOLDINGS = [
   { ticker:'TEM',  name:'Tempus AI',                     type:'stock',  shares:50,        avgCost:65.59   },
   { ticker:'TSLA', name:'Tesla',                         type:'stock',  shares:29,        avgCost:277.63  },
   // ETFs — European UCITS (prices fetched via Yahoo Finance fallback, stored in USD)
-  { ticker:'IEMA', name:'iShares MSCI EM UCITS ETF',     type:'etf',    shares:40,        avgCost:57.80   },
-  { ticker:'QUTM', name:'VanEck Quantum Computing ETF',  type:'etf',    shares:120,       avgCost:23.57   },
-  { ticker:'SEC0', name:'iShares Global Semiconductors', type:'etf',    shares:50,        avgCost:23.34   },
+  { ticker:'IEMA', name:'iShares MSCI EM UCITS ETF',     type:'etf',    shares:40,        avgCost:53.69   },
+  { ticker:'QUTM', name:'VanEck Quantum Computing ETF',  type:'etf',    shares:120,       avgCost:23.78   },
+  { ticker:'SEC0', name:'iShares Global Semiconductors', type:'etf',    shares:50,        avgCost:22.28   },
   // Crypto
   { ticker:'BTC',  name:'Bitcoin',                       type:'crypto', shares:0.067169,  avgCost:101815  },
   { ticker:'ETH',  name:'Ethereum',                      type:'crypto', shares:1,         avgCost:3546.26 },
@@ -159,25 +159,20 @@ var TICKER_MAP = {
   'XRP':  'BINANCE:XRPUSDT',
   'NEXO': 'BINANCE:NEXOUSDT',
   'RND':  'BINANCE:RENDERUSDT',
-  // European UCITS ETFs -> mapped to closest US-listed equivalent for live price tracking
-  // Price ratio applied so displayed price reflects the UCITS unit price the user actually holds
-  // IEMA (iShares MSCI EM UCITS, ~$57.80/unit) -> IEMG (iShares Core MSCI EM, ~$57/share) ratio ~1.0
-  'IEMA': 'IEMG',
-  // QUTM (VanEck Quantum UCITS EUR, ~$23.57/unit) -> QTUM (Defiance Quantum ETF ~$80) ratio 0.295
-  // Actually use MSFT as placeholder... better: use the ratio approach
-  // QUTM tracks similar to QTUM but at different price. Use QTUM and apply scale factor.
-  'QUTM': 'QTUM',
-  // SEC0 (iShares Global Semiconductors UCITS, ~$23.34/unit) -> SMH (VanEck Semi ETF ~$260) 
-  // Use SOXX (iShares Semi, ~$240) — scale factor applied
-  'SEC0': 'SOXX',
+  // European UCITS ETFs mapped to US-listed equivalents (ratio applied in fetchQuote)
+  // Ratios calibrated Aug 2026 from TipRanks actual prices — see ETF_RATIO below
+  'IEMA': 'IEMG',   // iShares Core MSCI EM (same index, USD-listed)
+  'QUTM': 'QTUM',   // Defiance Quantum ETF (similar holdings, USD-listed)
+  'SEC0': 'SOXX',   // iShares Semiconductor ETF (same sector, USD-listed)
 };
 
-// For ETFs mapped to US equivalents, store the price ratio (UCITS price / US ETF price at time of purchase)
-// This lets us show the correct UCITS price while tracking live US ETF movements
+// ETF price ratios: UCITS EUR price (in USD) / US ETF price
+// Recalibrated Aug 2026 using TipRanks actual prices + EUR/USD = 1.088
+// Update these if prices drift significantly (edit in Railway Variables or server.js)
 var ETF_RATIO = {
-  'IEMA': 1.015,   // IEMA ~$57.80, IEMG ~$57 -> ratio ~1.015
-  'QUTM': 0.296,   // QUTM ~$23.57, QTUM ~$79.6 -> ratio ~0.296
-  'SEC0': 0.097,   // SEC0 ~$23.34, SOXX ~$240 -> ratio ~0.097
+  'IEMA': 1.0376,  // IEMA €54.36 -> $59.14 / IEMG $57.00 = 1.0376
+  'QUTM': 0.3599,  // QNTM €25.47 -> $27.71 / QTUM $77.00 = 0.3599
+  'SEC0': 0.0809,  // SEC0 €17.10 -> $18.60 / SOXX $230.0 = 0.0809
 };
 
 async function fetchQuote(ticker){
