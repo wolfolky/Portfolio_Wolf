@@ -453,32 +453,22 @@ var filter='all',sortKey='value',sortDir=-1,currentCat='stock';
 var CH={},nextSec=120,cdInt=null;
 
 // History — v6 with correct baseline values
-var HIST_KEY='pf_hist_v6';
-// Known portfolio values at key dates (derived from transaction history)
-var KNOWN_BASELINES = {
-  '2023-03-23': 49418,   // All-time start
-  '2023-06-30': 73055,
-  '2023-09-30': 33840,
-  '2023-12-31': 67463,
-  '2024-03-31': 64231,
-  '2024-06-30': 75221,
-  '2024-09-30': 77652,
-  '2024-12-31': 90926,
-  '2025-03-31': 139820,
-  '2025-06-30': 162003,
-  '2025-09-30': 156296,
-  '2025-12-31': 207413,   // YTD start
-  '2026-03-31': 186756,
-  '2026-06-30': 206571,
-  '2026-07-31': 155875,   // MTD / Week start (Aug 1 2026)
-};
+var HIST_KEY='pf_hist_v7';
+// Portfolio value snapshots — these are built from daily tracking.
+// KNOWN_BASELINES are intentionally empty: historical snapshots tracked different
+// portfolio compositions (different stocks), so comparing to them gives wrong % figures.
+// MTD/YTD/Week build automatically as daily snapshots accumulate.
+var KNOWN_BASELINES = {};
 (function(){
   try{
-    // Always re-seed v6 to fix old bad data
-    if(!localStorage.getItem('pf_seeded_v6')){
-      var seed=Object.keys(KNOWN_BASELINES).map(function(d){return{d:d,v:KNOWN_BASELINES[d]};});
-      localStorage.setItem(HIST_KEY,JSON.stringify(seed));
-      localStorage.setItem('pf_seeded_v6','1');
+    // v7: clear all old bad history data, start fresh with daily tracking only
+    if(!localStorage.getItem('pf_seeded_v7')){
+      localStorage.removeItem('pf_hist_v5');
+      localStorage.removeItem('pf_hist_v6');
+      localStorage.removeItem('pf_seeded_v5');
+      localStorage.removeItem('pf_seeded_v6');
+      localStorage.setItem(HIST_KEY,'[]');
+      localStorage.setItem('pf_seeded_v7','1');
     }
   }catch(e){}
 })();
@@ -510,17 +500,19 @@ function getPerf(cur){
   function fmt2(n){return n<10?'0'+n:String(n);}
   function dateStr(d){return d.getFullYear()+'-'+fmt2(d.getMonth()+1)+'-'+fmt2(d.getDate());}
   function calc(start){if(!start||start===0)return null;return{abs:cur-start,pct:((cur-start)/start)*100};}
-  // Week: last 5 trading days (~7 calendar days)
   var weekDate=new Date(now.getTime()-7*86400000);
-  // MTD: first day of current month
   var mtdDate=new Date(now.getFullYear(),now.getMonth(),1);
-  // YTD: Dec 31 of previous year
   var ytdDate=new Date(now.getFullYear()-1,11,31);
+  // All Time: use unrealized P&L from server (current equity - cost basis of current holdings)
+  // This is the only meaningful "all time" metric — how much the CURRENT positions are up/down
+  var alltimeAbs = summary.totalPL || 0;
+  var alltimePct = summary.plPct || 0;
+  var alltimeResult = (alltimeAbs !== 0) ? {abs: alltimeAbs, pct: alltimePct} : null;
   return{
-    week:calc(periodStart(dateStr(weekDate))),
-    mtd:calc(periodStart(dateStr(mtdDate))),
-    ytd:calc(periodStart(dateStr(ytdDate))),
-    alltime:calc(periodStart('2023-03-23'))
+    week: calc(periodStart(dateStr(weekDate))),
+    mtd:  calc(periodStart(dateStr(mtdDate))),
+    ytd:  calc(periodStart(dateStr(ytdDate))),
+    alltime: alltimeResult
   };
 }
 
@@ -622,7 +614,24 @@ function perfCard(lbl,data,bench){
 function renderPerfGrid(){
   var cur=summary.totalValue||0,p=getPerf(cur),now=new Date();
   var pg=document.getElementById('perf-grid');
-  if(pg)pg.innerHTML=perfCard('Week (5 days)',p.week,BENCHMARKS.week)+perfCard('MTD · '+now.toLocaleString('en-US',{month:'long'}),p.mtd,BENCHMARKS.mtd)+perfCard('YTD '+now.getFullYear(),p.ytd,BENCHMARKS.ytd)+perfCard('All Time (Mar 2023)',p.alltime,BENCHMARKS.alltime);
+  if(!pg)return;
+  pg.innerHTML=
+    perfCard('Week (5 days)',p.week,BENCHMARKS.week)+
+    perfCard('MTD · '+now.toLocaleString('en-US',{month:'long'}),p.mtd,BENCHMARKS.mtd)+
+    perfCard('YTD '+now.getFullYear(),p.ytd,BENCHMARKS.ytd)+
+    perfCardAllTime(p.alltime);
+}
+
+function perfCardAllTime(data){
+  var cls=data&&data.pct>=0?'green':'red';
+  return '<div class="perf-card">'+
+    '<div class="perf-lbl">All Time · Unrealized P&L</div>'+
+    '<div class="perf-pct '+(data?cls:'')+'">'+(data?fmtP(data.pct):'—')+'</div>'+
+    '<div class="perf-abs '+(data?cls:'')+'">'+(data?fmtV(data.abs):'—')+'</div>'+
+    '<div class="perf-bench" style="border-top:1px solid var(--border);padding-top:7px">'+
+      '<span style="font-size:10px;color:var(--hint)">Current holdings vs cost basis</span>'+
+    '</div>'+
+  '</div>';
 }
 
 function renderMetrics(){
