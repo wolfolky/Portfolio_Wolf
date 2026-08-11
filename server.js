@@ -313,55 +313,35 @@ async function generateMacroNarrative() {
     // Yield spread (proxy: IEF/SHY price difference indicates curve shape)
     var spread10y2y = mc.bonds.spread || null;
 
-    var prompt = 'You are a macro analyst. Based on today\'s data, write a concise daily macro dashboard in JSON format with these exact fields:
-' +
-      '{
-' +
-      '  "regime_signal": "one sentence about overall market regime",
-' +
-      '  "climate_score": <number 0-10, slow-moving structural>,
-' +
-      '  "climate_label": "one word like Calm/Tense/Risk-On/Risk-Off",
-' +
-      '  "weather_score_low": <number -10 to +10>,
-' +
-      '  "weather_score_high": <number -10 to +10>,
-' +
-      '  "weather_label": "short phrase about today\'s market microstructure",
-' +
-      '  "tech_score": <number 0-100, IBD-style market health>,
-' +
-      '  "tech_label": "short phrase",
-' +
-      '  "narrative": "2-3 sentence market narrative for today",
-' +
-      '  "risk": {"title": "main risk title", "body": "2-3 sentences"},
-' +
-      '  "opportunity": {"title": "main opportunity title", "body": "2-3 sentences"},
-' +
-      '  "low_risk": {"title": "low-risk observation", "body": "1-2 sentences"},
-' +
-      '  "scenario_bull": {"trigger": "what needs to happen", "title": "scenario name", "body": "market implication"},
-' +
-      '  "scenario_base": {"trigger": "what needs to happen", "title": "scenario name", "body": "market implication"},
-' +
-      '  "scenario_bear": {"trigger": "what needs to happen", "title": "scenario name", "body": "market implication"},
-' +
-      '  "changes_since_yesterday": ["bullet1", "bullet2", "bullet3"]
-' +
-      '}
+    var dataCtx = 'S&P500 ' + (sp500 ? '$'+sp500.toFixed(0)+'('+spChg.toFixed(2)+'%)' : 'n/a') +
+      ' VIX ' + (vix ? vix.toFixed(1) : 'n/a') +
+      ' Gold ' + (gold ? '$'+gold.toFixed(0)+'('+goldChg.toFixed(2)+'%)' : 'n/a') +
+      ' DXY ' + (dxy ? dxy.toFixed(2)+'('+dxyChg.toFixed(2)+'%)' : 'n/a') +
+      ' WTI ' + (oil ? '$'+oil.toFixed(1) : 'n/a') +
+      ' CPI ' + (cpi ? cpi.toFixed(1)+'%' : 'n/a') +
+      ' GDP ' + (gdp ? gdp.toFixed(1)+'%' : 'n/a') +
+      ' Unemployment ' + (unemploy ? unemploy.toFixed(1)+'%' : 'n/a') +
+      ' 10Y ' + (treasury10 ? '$'+treasury10.toFixed(2) : 'n/a') +
+      ' Date:' + new Date().toDateString();
 
-' +
-      'Current data: S&P500 ' + (sp500?'$'+sp500.toFixed(0)+' ('+spChg.toFixed(2)+'%)':'n/a') +
-      ', VIX ' + (vix?vix.toFixed(1):'n/a') +
-      ', Gold ' + (gold?'$'+gold.toFixed(0)+' ('+goldChg.toFixed(2)+'%)':'n/a') +
-      ', DXY ' + (dxy?dxy.toFixed(2)+' ('+dxyChg.toFixed(2)+'%)':'n/a') +
-      ', Oil WTI ' + (oil?'$'+oil.toFixed(1):'n/a') +
-      ', CPI latest ' + (cpi?cpi.toFixed(1)+'%':'n/a') +
-      ', GDP ' + (gdp?gdp.toFixed(1)+'%':'n/a') +
-      ', Unemployment ' + (unemploy?unemploy.toFixed(1)+'%':'n/a') +
-      ', 10Y yield proxy ' + (treasury10?'$'+treasury10.toFixed(2):'n/a') +
-      '. Today is ' + new Date().toDateString() + '. Respond ONLY with valid JSON, no markdown.';
+    var schema = JSON.stringify({
+      regime_signal:'one sentence about market regime',
+      climate_score:'0-10 number',climate_label:'Calm|Tense|Risk-On|Risk-Off',
+      weather_score_low:'-10 to +10',weather_score_high:'-10 to +10',weather_label:'short phrase',
+      tech_score:'0-100 IBD-style',tech_label:'short phrase',
+      narrative:'2-3 sentence market narrative',
+      risk:{title:'main risk',body:'2-3 sentences'},
+      opportunity:{title:'main opportunity',body:'2-3 sentences'},
+      low_risk:{title:'low-risk note',body:'1-2 sentences'},
+      scenario_bull:{trigger:'condition',title:'name',body:'implication'},
+      scenario_base:{trigger:'condition',title:'name',body:'implication'},
+      scenario_bear:{trigger:'condition',title:'name',body:'implication'},
+      changes_since_yesterday:['bullet1','bullet2','bullet3']
+    });
+
+    var prompt = 'You are a macro analyst. Given this market data: ' + dataCtx +
+      ' Write a daily macro dashboard as JSON matching this schema exactly: ' + schema +
+      ' Respond ONLY with valid JSON. No markdown. No explanation.';
 
     var res = await fetch('https://api.anthropic.com/v1/messages', {
       method:'POST',
