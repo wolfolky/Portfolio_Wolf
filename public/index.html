@@ -203,6 +203,7 @@ tbody tr:hover{background:var(--bg3);}
     <div class="nav-sec">Manage</div>
     <button class="nav-item" onclick="gotoPage('manage',this)"><span class="nav-icon">✎</span>Edit Portfolio</button>
     <div class="nav-sec">Info</div>
+    <button class="nav-item" onclick="gotoPage('macro',this)"><span class="nav-icon">🌐</span>Macro</button>
     <button class="nav-item" onclick="gotoPage('news',this)"><span class="nav-icon">◫</span>News</button>
     <button class="nav-item" onclick="gotoPage('api',this)"><span class="nav-icon">⌁</span>API</button>
   </nav>
@@ -416,6 +417,48 @@ tbody tr:hover{background:var(--bg3);}
       </div>
     </div>
 
+    <!-- MACRO -->
+    <div class="page" id="page-macro">
+      <div class="pg-title">US Macro Indicators</div>
+      <div id="macro-status" class="sbar" style="margin-bottom:12px">
+        <div class="slive"><span class="slive-dot"></span>MACRO LIVE</div>
+        <div class="sdiv"></div>
+        <div class="sitem">Updated: <strong id="macro-upd">—</strong></div>
+        <div class="sdiv"></div>
+        <div class="sitem" style="color:var(--hint);font-size:10px">Refreshes every 5 min · Economic data from Finnhub</div>
+      </div>
+
+      <!-- Market Indices -->
+      <div class="pg-title" style="margin-top:4px">Market Indices</div>
+      <div id="macro-indices" class="mrow" style="grid-template-columns:repeat(5,1fr);margin-bottom:16px"></div>
+
+      <!-- Commodities + FX -->
+      <div class="two-col" style="margin-bottom:16px">
+        <div>
+          <div class="pg-title">Commodities</div>
+          <div id="macro-commodities" style="display:grid;grid-template-columns:1fr 1fr;gap:8px"></div>
+        </div>
+        <div>
+          <div class="pg-title">FX Rates (USD base)</div>
+          <div id="macro-fx" style="display:grid;grid-template-columns:1fr 1fr;gap:8px"></div>
+        </div>
+      </div>
+
+      <!-- Bond Market -->
+      <div class="pg-title">Bond Market</div>
+      <div id="macro-bonds" style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:16px"></div>
+
+      <!-- Economic Indicators -->
+      <div class="pg-title">Economic Indicators</div>
+      <div id="macro-economic" style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:16px"></div>
+
+      <!-- Charts -->
+      <div class="two-col">
+        <div class="card"><div class="card-title">Index performance (day %)</div><div style="position:relative;height:220px"><canvas id="macro-idx-chart"></canvas></div></div>
+        <div class="card"><div class="card-title">Economic snapshot</div><div style="position:relative;height:220px"><canvas id="macro-econ-chart"></canvas></div></div>
+      </div>
+    </div>
+
     <!-- NEWS -->
     <div class="page" id="page-news">
       <div class="pg-title">Market News</div>
@@ -437,6 +480,7 @@ tbody tr:hover{background:var(--bg3);}
     <button class="bnav-item" onclick="gotoPage('holdings',this,true)"><span class="bnav-icon">≡</span>Holdings</button>
     <button class="bnav-item" onclick="gotoPage('history',this,true)"><span class="bnav-icon">◳</span>History</button>
     <button class="bnav-item" onclick="gotoPage('manage',this,true)"><span class="bnav-icon">✎</span>Manage</button>
+    <button class="bnav-item" onclick="gotoPage('macro',this,true)"><span class="bnav-icon">🌐</span>Macro</button>
     <button class="bnav-item" onclick="gotoPage('news',this,true)"><span class="bnav-icon">◫</span>News</button>
   </div>
 </nav>
@@ -956,11 +1000,130 @@ function gotoPage(name,el,isMobile){
   if(name==='history'&&txData.length)renderHistoryPage();
   if(name==='cat-detail'&&txData.length)setCatDetail(currentCat);
   if(name==='manage')renderManage();
+  if(name==='macro')loadMacro();
+}
+
+// ── Macro rendering ──────────────────────────────────────────────────────────
+var macroData = {};
+var CH_MACRO = {};
+
+async function loadMacro(){
+  var d = await safeFetch('/api/macro');
+  if(!d||!d.macro)return;
+  macroData = d.macro;
+  var el=document.getElementById('macro-upd');
+  if(el&&d.macro.updatedAt) el.textContent=new Date(d.macro.updatedAt).toLocaleTimeString();
+  renderMacroIndices();
+  renderMacroCommodities();
+  renderMacroFX();
+  renderMacroBonds();
+  renderMacroEconomic();
+  renderMacroCharts();
+}
+
+function macroQuoteCard(item, isFX){
+  if(!item) return '<div class="metric"><div class="lbl">Loading…</div><div class="val" style="color:var(--hint)">—</div></div>';
+  if(isFX){
+    return '<div class="metric"><div class="lbl">'+item.name+'</div>'+
+      '<div class="val mono">'+item.rate.toFixed(4)+'</div>'+
+      '<div class="sub" style="color:var(--hint)">live rate</div></div>';
+  }
+  var cls = item.changePct>=0?'green':'red';
+  var arrow = item.changePct>=0?'▲':'▼';
+  return '<div class="metric"><div class="lbl">'+item.name+'</div>'+
+    '<div class="val">$'+fmt(item.price, item.price>100?0:2)+'</div>'+
+    '<div class="sub '+cls+'">'+arrow+' '+Math.abs(item.changePct).toFixed(2)+'% '+fmtV(item.change)+'</div></div>';
+}
+
+function renderMacroIndices(){
+  var el=document.getElementById('macro-indices'); if(!el)return;
+  var keys=['sp500','nasdaq','dow','vix','russell'];
+  el.innerHTML=keys.map(function(k){return macroQuoteCard(macroData.indices&&macroData.indices[k]);}).join('');
+}
+
+function renderMacroCommodities(){
+  var el=document.getElementById('macro-commodities'); if(!el)return;
+  var keys=['gold','oil','silver'];
+  el.innerHTML=keys.map(function(k){return macroQuoteCard(macroData.commodities&&macroData.commodities[k]);}).join('');
+}
+
+function renderMacroFX(){
+  var el=document.getElementById('macro-fx'); if(!el)return;
+  var keys=['EURUSD','GBPUSD','USDJPY','USDTRY'];
+  var names={EURUSD:'EUR/USD',GBPUSD:'GBP/USD',USDJPY:'USD/JPY',USDTRY:'USD/TRY'};
+  el.innerHTML=keys.map(function(k){
+    var item = macroData.fx&&macroData.fx[k] ? macroData.fx[k] : {name:names[k],rate:0};
+    return macroQuoteCard(item, true);
+  }).join('');
+}
+
+function renderMacroBonds(){
+  var el=document.getElementById('macro-bonds'); if(!el)return;
+  var keys=['treasury10','treasury2','tips','hiyield'];
+  el.innerHTML=keys.map(function(k){return macroQuoteCard(macroData.bonds&&macroData.bonds[k]);}).join('');
+}
+
+function renderMacroEconomic(){
+  var el=document.getElementById('macro-economic'); if(!el)return;
+  var keys=['gdp','cpi','unemploy','retail','indpro','housstart'];
+  if(!macroData.economic||!Object.keys(macroData.economic).length){
+    el.innerHTML='<div class="card" style="grid-column:1/-1"><div style="text-align:center;padding:20px;color:var(--hint)">Loading economic data…</div></div>';
+    return;
+  }
+  el.innerHTML=keys.map(function(k){
+    var d=macroData.economic[k];
+    if(!d||!d.current) return '<div class="metric"><div class="lbl">'+(d?d.name:k)+'</div><div class="val" style="color:var(--hint)">—</div><div class="sub" style="color:var(--hint)">no data</div></div>';
+    var curr=d.current.value, prev=d.previous?d.previous.value:null;
+    var chg=prev?curr-prev:0, chgPct=prev&&prev!==0?(chg/Math.abs(prev))*100:0;
+    var cls=chg>=0?'green':'red'; var arrow=chg>=0?'▲':'▼';
+    var unit=d.unit==='%'?'%':d.unit==='k'?' K':'';
+    var valStr = d.unit==='%' ? curr.toFixed(1)+'%' : d.unit==='k' ? fmt(curr,0)+' K' : fmt(curr,1);
+    return '<div class="metric">'+
+      '<div class="lbl">'+d.name+'</div>'+
+      '<div class="val">'+valStr+'</div>'+
+      '<div class="sub '+(prev?cls:'')+'">'+(prev?arrow+' '+Math.abs(chgPct).toFixed(1)+'% vs prev':'—')+'</div>'+
+      '<div class="sub" style="color:var(--hint);font-size:9px">'+d.current.period+'</div>'+
+    '</div>';
+  }).join('');
+}
+
+function renderMacroCharts(){
+  // Index day performance bar chart
+  var idxData = macroData.indices||{};
+  var idxKeys = ['sp500','nasdaq','dow','vix','russell'];
+  var idxLabels = idxKeys.map(function(k){return idxData[k]?idxData[k].symbol:'—';});
+  var idxVals = idxKeys.map(function(k){return idxData[k]?parseFloat(idxData[k].changePct.toFixed(2)):0;});
+  var cv1 = document.getElementById('macro-idx-chart');
+  if(cv1){
+    if(CH_MACRO.idx)CH_MACRO.idx.destroy();
+    CH_MACRO.idx = new Chart(cv1,{
+      type:'bar',
+      data:{labels:idxLabels,datasets:[{data:idxVals,backgroundColor:idxVals.map(function(v){return v>=0?'rgba(0,214,143,0.7)':'rgba(255,77,77,0.7)';}),borderRadius:4,borderSkipped:false}]},
+      options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:function(ctx){return(ctx.raw>=0?'+':'')+ctx.raw.toFixed(2)+'%';}}}},scales:{x:{grid:{display:false},ticks:{color:'#7a8ba6',font:{family:'IBM Plex Mono',size:10}}},y:{grid:{color:'rgba(255,255,255,0.04)'},ticks:{color:'#3d5068',font:{size:9,family:'IBM Plex Mono'},callback:function(v){return(v>=0?'+':'')+v+'%';}}}}}
+    });
+  }
+
+  // Economic snapshot horizontal bar
+  var econData = macroData.economic||{};
+  var econKeys = ['gdp','cpi','unemploy','retail'];
+  var econLabels = econKeys.map(function(k){return econData[k]?econData[k].name.slice(0,12):'—';});
+  var econVals = econKeys.map(function(k){return econData[k]&&econData[k].current?econData[k].current.value:0;});
+  var cv2 = document.getElementById('macro-econ-chart');
+  if(cv2){
+    if(CH_MACRO.econ)CH_MACRO.econ.destroy();
+    CH_MACRO.econ = new Chart(cv2,{
+      type:'bar',
+      data:{labels:econLabels,datasets:[{data:econVals,backgroundColor:['rgba(59,130,246,0.7)','rgba(255,77,77,0.7)','rgba(245,158,11,0.7)','rgba(0,214,143,0.7)'],borderRadius:4,borderSkipped:false}]},
+      options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:function(ctx){return ctx.raw.toFixed(2)+'%';}}}},scales:{x:{grid:{color:'rgba(255,255,255,0.04)'},ticks:{color:'#3d5068',font:{size:9,family:'IBM Plex Mono'},callback:function(v){return v+'%';}}},y:{grid:{display:false},ticks:{color:'#7a8ba6',font:{size:10,family:'IBM Plex Mono'}}}}}
+    });
+  }
 }
 
 // Init
 document.getElementById('f-date').value=new Date().toISOString().slice(0,10);
 loadAll();
+loadMacro();
+setInterval(loadMacro, 300000); // refresh macro every 5 min
 var bootTimer=setInterval(function(){if(allHoldings.length>0){clearInterval(bootTimer);setInterval(loadAll,120000);}else{loadAll();}},4000);
 </script>
 </body>
