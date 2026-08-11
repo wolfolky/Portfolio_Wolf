@@ -259,7 +259,128 @@ function getDateStr(daysAgo){
 }
 
 fetchAllPrices().then(fetchNews);
+fetchMacro();
 setInterval(function(){fetchAllPrices().then(fetchNews);},120000);
+setInterval(fetchMacro, 300000); // Macro refreshes every 5 min
+
+// ── Macro data ────────────────────────────────────────────────────────────────
+var macroCache = { indices:{}, fx:{}, economic:{}, bonds:{}, commodities:{}, updatedAt:null };
+
+async function fetchMacroQuote(symbol, key) {
+  try {
+    var res = await fetch('https://finnhub.io/api/v1/quote?symbol='+symbol+'&token='+FINNHUB_KEY, {headers:{'User-Agent':'Mozilla/5.0'}});
+    var d = await res.json();
+    if(d && d.c && d.c > 0) {
+      var chg = d.c - d.pc, pct = d.pc > 0 ? (chg/d.pc)*100 : 0;
+      return {price:d.c, change:chg, changePct:pct, prevClose:d.pc, high:d.h, low:d.l, open:d.o};
+    }
+  } catch(e) {}
+  return null;
+}
+
+async function fetchEconomicSeries(code) {
+  try {
+    var res = await fetch('https://finnhub.io/api/v1/economic?code='+code+'&token='+FINNHUB_KEY, {headers:{'User-Agent':'Mozilla/5.0'}});
+    var d = await res.json();
+    if(Array.isArray(d) && d.length > 0) {
+      // Return last 2 values to compute change
+      var sorted = d.sort(function(a,b){return a.period > b.period ? -1:1;});
+      return { current: sorted[0], previous: sorted[1] || null, history: sorted.slice(0,12) };
+    }
+  } catch(e) {}
+  return null;
+}
+
+async function fetchFxRate(from, to) {
+  try {
+    var res = await fetch('https://finnhub.io/api/v1/forex/rates?base='+from+'&token='+FINNHUB_KEY, {headers:{'User-Agent':'Mozilla/5.0'}});
+    var d = await res.json();
+    if(d && d.quote && d.quote[to]) return d.quote[to];
+  } catch(e) {}
+  return null;
+}
+
+async function fetchMacro() {
+  console.log('Fetching macro data...');
+  try {
+    // Market indices
+    var indices = [
+      {key:'sp500', symbol:'SPY',  name:'S&P 500'},
+      {key:'nasdaq',symbol:'QQQ',  name:'Nasdaq 100'},
+      {key:'dow',   symbol:'DIA',  name:'Dow Jones'},
+      {key:'vix',   symbol:'VIX',  name:'VIX Fear Index'},
+      {key:'russell',symbol:'IWM', name:'Russell 2000'},
+    ];
+    for(var i=0;i<indices.length;i++){
+      var q = await fetchMacroQuote(indices[i].symbol, indices[i].key);
+      if(q) macroCache.indices[indices[i].key] = Object.assign({name:indices[i].name, symbol:indices[i].symbol}, q);
+      await delay(1200);
+    }
+
+    // Commodities
+    var comms = [
+      {key:'gold',  symbol:'GLD',  name:'Gold (GLD ETF)'},
+      {key:'oil',   symbol:'USO',  name:'Oil (USO ETF)'},
+      {key:'silver',symbol:'SLV',  name:'Silver (SLV ETF)'},
+    ];
+    for(var i=0;i<comms.length;i++){
+      var q = await fetchMacroQuote(comms[i].symbol, comms[i].key);
+      if(q) macroCache.commodities[comms[i].key] = Object.assign({name:comms[i].name, symbol:comms[i].symbol}, q);
+      await delay(1200);
+    }
+
+    // Bond proxies (ETFs)
+    var bonds = [
+      {key:'treasury10', symbol:'IEF',  name:'10Y Treasury (IEF)'},
+      {key:'treasury2',  symbol:'SHY',  name:'2Y Treasury (SHY)'},
+      {key:'tips',       symbol:'TIP',  name:'TIPS Inflation'},
+      {key:'hiyield',    symbol:'HYG',  name:'High Yield Bonds'},
+    ];
+    for(var i=0;i<bonds.length;i++){
+      var q = await fetchMacroQuote(bonds[i].symbol, bonds[i].key);
+      if(q) macroCache.bonds[bonds[i].key] = Object.assign({name:bonds[i].name, symbol:bonds[i].symbol}, q);
+      await delay(1200);
+    }
+
+    // FX rates (base USD)
+    var fxPairs = [
+      {key:'EURUSD', from:'USD', to:'EUR', name:'EUR/USD'},
+      {key:'GBPUSD', from:'USD', to:'GBP', name:'GBP/USD'},
+      {key:'USDJPY', from:'USD', to:'JPY', name:'USD/JPY'},
+      {key:'USDTRY', from:'USD', to:'TRY', name:'USD/TRY'},
+    ];
+    var usdRates = await fetchFxRate('USD', 'EUR'); // test call
+    if(usdRates !== null) {
+      var res = await fetch('https://finnhub.io/api/v1/forex/rates?base=USD&token='+FINNHUB_KEY, {headers:{'User-Agent':'Mozilla/5.0'}});
+      var fxData = await res.json();
+      if(fxData && fxData.quote) {
+        fxPairs.forEach(function(p){
+          var rate = p.from === 'USD' ? fxData.quote[p.to] : (1/fxData.quote[p.from]);
+          if(rate) macroCache.fx[p.key] = {name:p.name, rate:rate};
+        });
+      }
+    }
+    await delay(1200);
+
+    // Economic indicators from Finnhub
+    var econCodes = [
+      {key:'gdp',       code:'US_GDP',       name:'GDP Growth Rate', unit:'%'},
+      {key:'cpi',       code:'US_CPI',        name:'CPI Inflation',   unit:'%'},
+      {key:'unemploy',  code:'US_UNEMPLOY',   name:'Unemployment',    unit:'%'},
+      {key:'retail',    code:'US_RETAIL',     name:'Retail Sales',    unit:'%'},
+      {key:'indpro',    code:'US_INDPRO',     name:'Industrial Prod', unit:'index'},
+      {key:'housstart', code:'US_HOUSSTART',  name:'Housing Starts',  unit:'k'},
+    ];
+    for(var i=0;i<econCodes.length;i++){
+      var data = await fetchEconomicSeries(econCodes[i].code);
+      if(data) macroCache.economic[econCodes[i].key] = Object.assign({name:econCodes[i].name, unit:econCodes[i].unit}, data);
+      await delay(1200);
+    }
+
+    macroCache.updatedAt = new Date().toISOString();
+    console.log('Macro data refreshed.');
+  } catch(e) { console.error('Macro fetch error:', e.message); }
+}
 
 // ── Portfolio builder ────────────────────────────────────────────────────────
 function buildPortfolio(){
@@ -364,6 +485,7 @@ app.get('/api/allocation',function(req,res){
   res.json({ok:true,totalValue:s.totalValue,allocation:alloc});
 });
 
+app.get('/api/macro',function(req,res){res.json({ok:true,macro:macroCache,updatedAt:macroCache.updatedAt});});
 app.get('/api/news',function(req,res){res.json({ok:true,news:priceCache.news,updatedAt:priceCache.updatedAt});});
 app.get('/api/prices',function(req,res){res.json({ok:true,stocks:priceCache.stocks,updatedAt:priceCache.updatedAt});});
 app.get('/api/health',function(req,res){var live=Object.values(priceCache.stocks).filter(function(q){return!q.seeded;}).length;res.json({ok:true,status:'running',tickersLoaded:live,totalTickers:HOLDINGS.length,cash:CASH,updatedAt:priceCache.updatedAt});});
