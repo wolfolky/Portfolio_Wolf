@@ -264,9 +264,13 @@ setInterval(function(){fetchAllPrices().then(fetchNews);},120000);
 setInterval(fetchMacro, 300000); // Macro refreshes every 5 min
 
 // ── Macro data ────────────────────────────────────────────────────────────────
-var macroCache = { indices:{}, fx:{}, economic:{}, bonds:{}, commodities:{}, updatedAt:null };
+var macroCache = {
+  indices:{}, fx:{}, economic:{}, bonds:{}, commodities:{}, crypto:{},
+  regimeClimate:null, regimeWeather:null, regimeTech:null,
+  narrative:null, scenarios:null, calendar:[], updatedAt:null
+};
 
-async function fetchMacroQuote(symbol, key) {
+async function fetchMacroQuote(symbol) {
   try {
     var res = await fetch('https://finnhub.io/api/v1/quote?symbol='+symbol+'&token='+FINNHUB_KEY, {headers:{'User-Agent':'Mozilla/5.0'}});
     var d = await res.json();
@@ -283,102 +287,233 @@ async function fetchEconomicSeries(code) {
     var res = await fetch('https://finnhub.io/api/v1/economic?code='+code+'&token='+FINNHUB_KEY, {headers:{'User-Agent':'Mozilla/5.0'}});
     var d = await res.json();
     if(Array.isArray(d) && d.length > 0) {
-      // Return last 2 values to compute change
       var sorted = d.sort(function(a,b){return a.period > b.period ? -1:1;});
-      return { current: sorted[0], previous: sorted[1] || null, history: sorted.slice(0,12) };
+      return { current: sorted[0], previous: sorted[1]||null, history: sorted.slice(0,12) };
     }
   } catch(e) {}
   return null;
 }
 
-async function fetchFxRate(from, to) {
+async function generateMacroNarrative() {
   try {
-    var res = await fetch('https://finnhub.io/api/v1/forex/rates?base='+from+'&token='+FINNHUB_KEY, {headers:{'User-Agent':'Mozilla/5.0'}});
-    var d = await res.json();
-    if(d && d.quote && d.quote[to]) return d.quote[to];
-  } catch(e) {}
-  return null;
+    var mc = macroCache;
+    var vix = mc.indices.vix ? mc.indices.vix.price : null;
+    var sp500 = mc.indices.sp500 ? mc.indices.sp500.price : null;
+    var spChg = mc.indices.sp500 ? mc.indices.sp500.changePct : null;
+    var treasury10 = mc.bonds.treasury10 ? mc.bonds.treasury10.price : null;
+    var treasury2 = mc.bonds.treasury2 ? mc.bonds.treasury2.price : null;
+    var gold = mc.commodities.gold ? mc.commodities.gold.price : null;
+    var goldChg = mc.commodities.gold ? mc.commodities.gold.changePct : null;
+    var dxy = mc.fx.DXY ? mc.fx.DXY.price : null;
+    var dxyChg = mc.fx.DXY ? mc.fx.DXY.changePct : null;
+    var oil = mc.commodities.oil ? mc.commodities.oil.price : null;
+    var cpi = mc.economic.cpi ? mc.economic.cpi.current.value : null;
+    var gdp = mc.economic.gdp ? mc.economic.gdp.current.value : null;
+    var unemploy = mc.economic.unemploy ? mc.economic.unemploy.current.value : null;
+    // Yield spread (proxy: IEF/SHY price difference indicates curve shape)
+    var spread10y2y = mc.bonds.spread || null;
+
+    var prompt = 'You are a macro analyst. Based on today\'s data, write a concise daily macro dashboard in JSON format with these exact fields:
+' +
+      '{
+' +
+      '  "regime_signal": "one sentence about overall market regime",
+' +
+      '  "climate_score": <number 0-10, slow-moving structural>,
+' +
+      '  "climate_label": "one word like Calm/Tense/Risk-On/Risk-Off",
+' +
+      '  "weather_score_low": <number -10 to +10>,
+' +
+      '  "weather_score_high": <number -10 to +10>,
+' +
+      '  "weather_label": "short phrase about today\'s market microstructure",
+' +
+      '  "tech_score": <number 0-100, IBD-style market health>,
+' +
+      '  "tech_label": "short phrase",
+' +
+      '  "narrative": "2-3 sentence market narrative for today",
+' +
+      '  "risk": {"title": "main risk title", "body": "2-3 sentences"},
+' +
+      '  "opportunity": {"title": "main opportunity title", "body": "2-3 sentences"},
+' +
+      '  "low_risk": {"title": "low-risk observation", "body": "1-2 sentences"},
+' +
+      '  "scenario_bull": {"trigger": "what needs to happen", "title": "scenario name", "body": "market implication"},
+' +
+      '  "scenario_base": {"trigger": "what needs to happen", "title": "scenario name", "body": "market implication"},
+' +
+      '  "scenario_bear": {"trigger": "what needs to happen", "title": "scenario name", "body": "market implication"},
+' +
+      '  "changes_since_yesterday": ["bullet1", "bullet2", "bullet3"]
+' +
+      '}
+
+' +
+      'Current data: S&P500 ' + (sp500?'$'+sp500.toFixed(0)+' ('+spChg.toFixed(2)+'%)':'n/a') +
+      ', VIX ' + (vix?vix.toFixed(1):'n/a') +
+      ', Gold ' + (gold?'$'+gold.toFixed(0)+' ('+goldChg.toFixed(2)+'%)':'n/a') +
+      ', DXY ' + (dxy?dxy.toFixed(2)+' ('+dxyChg.toFixed(2)+'%)':'n/a') +
+      ', Oil WTI ' + (oil?'$'+oil.toFixed(1):'n/a') +
+      ', CPI latest ' + (cpi?cpi.toFixed(1)+'%':'n/a') +
+      ', GDP ' + (gdp?gdp.toFixed(1)+'%':'n/a') +
+      ', Unemployment ' + (unemploy?unemploy.toFixed(1)+'%':'n/a') +
+      ', 10Y yield proxy ' + (treasury10?'$'+treasury10.toFixed(2):'n/a') +
+      '. Today is ' + new Date().toDateString() + '. Respond ONLY with valid JSON, no markdown.';
+
+    var res = await fetch('https://api.anthropic.com/v1/messages', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        model:'claude-sonnet-4-6',
+        max_tokens:1000,
+        messages:[{role:'user',content:prompt}]
+      })
+    });
+    var data = await res.json();
+    if(data && data.content && data.content[0]) {
+      var text = data.content[0].text.replace(/```json|```/g,'').trim();
+      var parsed = JSON.parse(text);
+      macroCache.regimeClimate = {score:parsed.climate_score, label:parsed.climate_label};
+      macroCache.regimeWeather = {low:parsed.weather_score_low, high:parsed.weather_score_high, label:parsed.weather_label};
+      macroCache.regimeTech = {score:parsed.tech_score, label:parsed.tech_label};
+      macroCache.narrative = {
+        signal:parsed.regime_signal, text:parsed.narrative,
+        risk:parsed.risk, opportunity:parsed.opportunity, lowRisk:parsed.low_risk,
+        changes:parsed.changes_since_yesterday || []
+      };
+      macroCache.scenarios = {
+        bull:parsed.scenario_bull,
+        base:parsed.scenario_base,
+        bear:parsed.scenario_bear
+      };
+      console.log('Macro narrative generated.');
+    }
+  } catch(e) { console.error('Narrative generation error:', e.message); }
 }
 
 async function fetchMacro() {
   console.log('Fetching macro data...');
   try {
-    // Market indices
-    var indices = [
-      {key:'sp500', symbol:'SPY',  name:'S&P 500'},
-      {key:'nasdaq',symbol:'QQQ',  name:'Nasdaq 100'},
-      {key:'dow',   symbol:'DIA',  name:'Dow Jones'},
-      {key:'vix',   symbol:'VIX',  name:'VIX Fear Index'},
-      {key:'russell',symbol:'IWM', name:'Russell 2000'},
+    // ── Market indices (via ETF proxies on Finnhub free) ──
+    var indexTickers = [
+      {key:'sp500',  sym:'SPY',  name:'S&P 500',    mult:10},
+      {key:'nasdaq', sym:'QQQ',  name:'Nasdaq 100',  mult:40},
+      {key:'dow',    sym:'DIA',  name:'Dow Jones',   mult:350},
+      {key:'russell',sym:'IWM',  name:'Russell 2000',mult:11},
+      {key:'vix',    sym:'VIXY', name:'VIX',         mult:1, isVix:true},
     ];
-    for(var i=0;i<indices.length;i++){
-      var q = await fetchMacroQuote(indices[i].symbol, indices[i].key);
-      if(q) macroCache.indices[indices[i].key] = Object.assign({name:indices[i].name, symbol:indices[i].symbol}, q);
-      await delay(1200);
-    }
-
-    // Commodities
-    var comms = [
-      {key:'gold',  symbol:'GLD',  name:'Gold (GLD ETF)'},
-      {key:'oil',   symbol:'USO',  name:'Oil (USO ETF)'},
-      {key:'silver',symbol:'SLV',  name:'Silver (SLV ETF)'},
-    ];
-    for(var i=0;i<comms.length;i++){
-      var q = await fetchMacroQuote(comms[i].symbol, comms[i].key);
-      if(q) macroCache.commodities[comms[i].key] = Object.assign({name:comms[i].name, symbol:comms[i].symbol}, q);
-      await delay(1200);
-    }
-
-    // Bond proxies (ETFs)
-    var bonds = [
-      {key:'treasury10', symbol:'IEF',  name:'10Y Treasury (IEF)'},
-      {key:'treasury2',  symbol:'SHY',  name:'2Y Treasury (SHY)'},
-      {key:'tips',       symbol:'TIP',  name:'TIPS Inflation'},
-      {key:'hiyield',    symbol:'HYG',  name:'High Yield Bonds'},
-    ];
-    for(var i=0;i<bonds.length;i++){
-      var q = await fetchMacroQuote(bonds[i].symbol, bonds[i].key);
-      if(q) macroCache.bonds[bonds[i].key] = Object.assign({name:bonds[i].name, symbol:bonds[i].symbol}, q);
-      await delay(1200);
-    }
-
-    // FX rates (base USD)
-    var fxPairs = [
-      {key:'EURUSD', from:'USD', to:'EUR', name:'EUR/USD'},
-      {key:'GBPUSD', from:'USD', to:'GBP', name:'GBP/USD'},
-      {key:'USDJPY', from:'USD', to:'JPY', name:'USD/JPY'},
-      {key:'USDTRY', from:'USD', to:'TRY', name:'USD/TRY'},
-    ];
-    var usdRates = await fetchFxRate('USD', 'EUR'); // test call
-    if(usdRates !== null) {
-      var res = await fetch('https://finnhub.io/api/v1/forex/rates?base=USD&token='+FINNHUB_KEY, {headers:{'User-Agent':'Mozilla/5.0'}});
-      var fxData = await res.json();
-      if(fxData && fxData.quote) {
-        fxPairs.forEach(function(p){
-          var rate = p.from === 'USD' ? fxData.quote[p.to] : (1/fxData.quote[p.from]);
-          if(rate) macroCache.fx[p.key] = {name:p.name, rate:rate};
-        });
+    for(var i=0;i<indexTickers.length;i++){
+      var t=indexTickers[i], q=await fetchMacroQuote(t.sym);
+      if(q){
+        if(t.isVix){
+          macroCache.indices[t.key]=Object.assign({name:t.name,symbol:'VIX'},q);
+        } else {
+          // multiply ETF price to get approximate index level
+          macroCache.indices[t.key]=Object.assign({name:t.name,symbol:t.sym},q,{
+            indexPrice: parseFloat((q.price*t.mult).toFixed(2)),
+            indexChange: parseFloat((q.change*t.mult).toFixed(2))
+          });
+        }
       }
+      await delay(1200);
+    }
+
+    // ── DXY Dollar Index (via UUP ETF, then back-calc) ──
+    var dxy = await fetchMacroQuote('UUP');
+    if(dxy) {
+      // UUP ~$30 = DXY ~100, ratio ~3.33
+      macroCache.fx.DXY = {name:'Dollar Index (DXY)', symbol:'UUP', price:parseFloat((dxy.price*3.32).toFixed(2)), change:parseFloat((dxy.change*3.32).toFixed(2)), changePct:dxy.changePct};
     }
     await delay(1200);
 
-    // Economic indicators from Finnhub
-    var econCodes = [
-      {key:'gdp',       code:'US_GDP',       name:'GDP Growth Rate', unit:'%'},
-      {key:'cpi',       code:'US_CPI',        name:'CPI Inflation',   unit:'%'},
-      {key:'unemploy',  code:'US_UNEMPLOY',   name:'Unemployment',    unit:'%'},
-      {key:'retail',    code:'US_RETAIL',     name:'Retail Sales',    unit:'%'},
-      {key:'indpro',    code:'US_INDPRO',     name:'Industrial Prod', unit:'index'},
-      {key:'housstart', code:'US_HOUSSTART',  name:'Housing Starts',  unit:'k'},
+    // ── Bond market (via ETF proxies) ──
+    // IEF = 7-10Y Treasury ETF (~$98), use as 10Y yield proxy
+    // SHY = 1-3Y Treasury ETF, 2Y proxy
+    var ief = await fetchMacroQuote('IEF'); await delay(1200);
+    var shy = await fetchMacroQuote('SHY'); await delay(1200);
+    var tip = await fetchMacroQuote('TIP'); await delay(1200);
+    var hyg = await fetchMacroQuote('HYG'); await delay(1200);
+    var lqd = await fetchMacroQuote('LQD'); await delay(1200);
+
+    if(ief) macroCache.bonds.treasury10 = Object.assign({name:'10Y Treasury (IEF)', symbol:'IEF'}, ief);
+    if(shy) macroCache.bonds.treasury2  = Object.assign({name:'2Y Treasury (SHY)',  symbol:'SHY'}, shy);
+    if(tip) macroCache.bonds.tips       = Object.assign({name:'TIPS Real Rate (TIP)',symbol:'TIP'}, tip);
+    if(hyg) macroCache.bonds.hiyield    = Object.assign({name:'High Yield (HYG)',   symbol:'HYG'}, hyg);
+    if(lqd) macroCache.bonds.investgrade= Object.assign({name:'Invest. Grade (LQD)',symbol:'LQD'}, lqd);
+    // Yield curve proxy: SHY vs IEF price divergence
+    if(ief&&shy) macroCache.bonds.spread = {
+      name:'10Y-2Y Curve', value: parseFloat((ief.changePct - shy.changePct).toFixed(3)),
+      label: (ief.changePct > shy.changePct) ? 'Steepening' : 'Flattening'
+    };
+
+    // ── Commodities ──
+    var comms = [
+      {key:'gold',   sym:'GLD',  name:'Gold (GLD)',        mult:9.4},
+      {key:'oil',    sym:'USO',  name:'WTI Oil (USO)',     mult:2.2},
+      {key:'brent',  sym:'BNO',  name:'Brent Oil (BNO)',   mult:2.5},
+      {key:'silver', sym:'SLV',  name:'Silver (SLV)',      mult:21},
+      {key:'copper', sym:'CPER', name:'Copper (CPER)',     mult:1},
     ];
-    for(var i=0;i<econCodes.length;i++){
-      var data = await fetchEconomicSeries(econCodes[i].code);
-      if(data) macroCache.economic[econCodes[i].key] = Object.assign({name:econCodes[i].name, unit:econCodes[i].unit}, data);
+    for(var i=0;i<comms.length;i++){
+      var t=comms[i], q=await fetchMacroQuote(t.sym);
+      if(q) macroCache.commodities[t.key]=Object.assign({name:t.name,symbol:t.sym},q,{
+        spotPrice: parseFloat((q.price*t.mult).toFixed(2))
+      });
       await delay(1200);
     }
 
+    // ── Crypto ──
+    var btc = await fetchMacroQuote('BINANCE:BTCUSDT'); await delay(1200);
+    var eth = await fetchMacroQuote('BINANCE:ETHUSDT'); await delay(1200);
+    if(btc) macroCache.crypto.btc = Object.assign({name:'Bitcoin',symbol:'BTC'}, btc);
+    if(eth) macroCache.crypto.eth = Object.assign({name:'Ethereum',symbol:'ETH'}, eth);
+
+    // ── FX Rates ──
+    await delay(1200);
+    try {
+      var fxRes = await fetch('https://finnhub.io/api/v1/forex/rates?base=USD&token='+FINNHUB_KEY, {headers:{'User-Agent':'Mozilla/5.0'}});
+      var fxData = await fxRes.json();
+      if(fxData && fxData.quote) {
+        var pairs = [{k:'EURUSD',to:'EUR',n:'EUR/USD'},{k:'GBPUSD',to:'GBP',n:'GBP/USD'},{k:'USDJPY',to:'JPY',n:'USD/JPY'},{k:'USDTRY',to:'TRY',n:'USD/TRY'},{k:'USDCHF',to:'CHF',n:'USD/CHF'}];
+        pairs.forEach(function(p){ if(fxData.quote[p.to]) macroCache.fx[p.k]={name:p.n,rate:parseFloat((1/fxData.quote[p.to]).toFixed(4))}; });
+        // fix EUR/USD (inverse)
+        if(fxData.quote.EUR) macroCache.fx.EURUSD={name:'EUR/USD',rate:parseFloat(fxData.quote.EUR.toFixed(4))};
+        if(fxData.quote.GBP) macroCache.fx.GBPUSD={name:'GBP/USD',rate:parseFloat(fxData.quote.GBP.toFixed(4))};
+      }
+    } catch(e) {}
+
+    // ── Economic indicators ──
+    var econCodes = [
+      {k:'gdp',      code:'US_GDP',      name:'GDP Growth',     unit:'%'},
+      {k:'cpi',      code:'US_CPI',      name:'CPI Inflation',  unit:'%'},
+      {k:'unemploy', code:'US_UNEMPLOY', name:'Unemployment',   unit:'%'},
+      {k:'retail',   code:'US_RETAIL',   name:'Retail Sales',   unit:'%'},
+      {k:'indpro',   code:'US_INDPRO',   name:'Industrial Prod',unit:'idx'},
+      {k:'housstart',code:'US_HOUSSTART',name:'Housing Starts', unit:'K'},
+    ];
+    for(var i=0;i<econCodes.length;i++){
+      var ec=econCodes[i], data=await fetchEconomicSeries(ec.code);
+      if(data) macroCache.economic[ec.k]=Object.assign({name:ec.name,unit:ec.unit},data);
+      await delay(1200);
+    }
+
+    // ── Generate AI narrative ──
+    await generateMacroNarrative();
+
+    // ── Upcoming economic calendar (static, update weekly) ──
+    macroCache.calendar = [
+      {date:'2026-08-12',time:'12:30 ET',event:'CPI (July)',importance:'high',consensus:'+0.1% MoM',prior:'+0.3% MoM'},
+      {date:'2026-08-14',time:'08:30 ET',event:'Retail Sales (July)',importance:'high',consensus:'+0.3%',prior:'-0.1%'},
+      {date:'2026-08-14',time:'08:30 ET',event:'PPI (July)',importance:'medium',consensus:'+0.2%',prior:'+0.0%'},
+      {date:'2026-08-15',time:'08:30 ET',event:'Empire State Mfg',importance:'low',consensus:'-5.0',prior:'-6.0'},
+      {date:'2026-09-16',time:'14:00 ET',event:'FOMC Decision',importance:'high',consensus:'Hold 4.25-4.50%',prior:'4.25-4.50%'},
+    ];
+
     macroCache.updatedAt = new Date().toISOString();
-    console.log('Macro data refreshed.');
+    console.log('Macro data refreshed at ' + macroCache.updatedAt);
   } catch(e) { console.error('Macro fetch error:', e.message); }
 }
 
